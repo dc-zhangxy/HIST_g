@@ -30,7 +30,7 @@ from qlib.contrib.model.pytorch_transformer import Transformer
 from model2 import MLP, HIST   #model/ model2
 from gcn_models import GCN
 from utils import metric_fn, mse
-from csi_dataloader import DataLoader
+from dataloader_industry import DataLoader
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
