@@ -53,7 +53,7 @@ class DataLoader:
 
         adj_today = np.zeros([len(stock_today),len(stock_today)])
         adj_today[stock_index,:][:,stock_index] = np.array(analyst_today)[stock_analyst_index,:][:,stock_analyst_index]
-        
+        adj_today = adj_today + np.identity(len(stock_today)) # 令对角线为1
         # print(analyst_today.sum().sum(), adj_today.sum())
 
         adj_out = torch.tensor(adj_today, device=self.device)
