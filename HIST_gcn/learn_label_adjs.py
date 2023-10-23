@@ -32,7 +32,8 @@ from model2 import MLP, HIST   #model/ model2
 from gcn_models import GCN
 from hist_gcn_model import HIST_GCN
 from utils import metric_fn, mse
-from dataloader_analyst import DataLoader
+# from dataloader_analyst import DataLoader
+from dataloader_flow import DataLoader
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -65,7 +66,7 @@ def get_model(model_name):
         return HIST
     
     if model_name.upper() == 'GCN':
-        return GCN
+        return HIST_GCN #GCN
 
     raise ValueError('unknown model name `%s`'%model_name)
 
@@ -260,8 +261,9 @@ def create_loaders(args, train_start_date):
     #         if industry800['行业1'][i] == industry800['行业1'][j]:
     #             np_adj[i,j] = 1.0
 
+    dir_ = 'data/inflow_trade.pkl'
     # dir_ = 'data/adjacency_analyst.pkl' 
-    dir_ = 'data/adj_myprod.pkl'
+    # dir_ = 'data/adj_myprod.pkl'
     with open(dir_,'rb')as f: # 
         adj_analyst = pickle.load(f)
     # start_index = 0
