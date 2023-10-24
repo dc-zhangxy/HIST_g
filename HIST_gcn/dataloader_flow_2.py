@@ -57,7 +57,7 @@ class DataLoader:
         # print('stock_flow_index:', len(stock_flow_index))
         adf_mf_cs = self.get_mf_data_split(day.replace('-', ''), self.df_input, stock_flow_index, gapdays=20)
         # print('adf_mf_cs:',adf_mf_cs.sum())
-        adj_today = pd.DataFrame(np.zeros([len(stock_today), len(stock_today)])) # np.identity(len(stock_today)) # 
+        adj_today = pd.DataFrame(np.identity(len(stock_today)) ) # np.identity(len(stock_today)) # np.zeros([len(stock_today), len(stock_today)])
         adj_today.loc[stock_index, stock_index] = adf_mf_cs
         adj_out = torch.tensor(np.array(adj_today), device=self.device)
         # 这样赋值是失败的
@@ -81,8 +81,10 @@ class DataLoader:
         return outs + (H, stock_today, day,)  # (self.index[slc],)
     
     def get_mf_cs_cos(self, arr):
+        arr = np.nan_to_num(arr)
         arr1 = arr.T.dot(arr)
         arr2 = ((arr**2).sum(axis=0)**0.5).reshape(-1, 1)
+        arr2[arr2==0] = 1
         arr3 = arr2.reshape(1, -1)
         ans = arr1 / arr2 / arr3
         # ans = ans * (1 - np.diag(np.ones(ans.shape[0])))
