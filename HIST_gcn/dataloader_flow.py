@@ -16,6 +16,8 @@ class DataLoader:
         self.df_feature = df_feature #.values
         self.df_label = df_label # .values
         self.df_mf = pkl_inflow['inflow_trade']
+        self.df_roll = self.df_mf.rolling(3, min_periods=1).sum().fillna(0)
+        self.df_input = np.sign(self.df_roll)
         self.d_d2n = {v: k for k, v in enumerate(self.df_mf.index)}
         self.d_c2n = {v: k for k, v in enumerate(self.df_mf.columns)}
         
@@ -35,9 +37,6 @@ class DataLoader:
         self.pin_memory = pin_memory
 
     def get(self, slc):  # 之后需打乱batch顺序
-
-        df_roll = self.df_mf.rolling(3, min_periods=1).sum().fillna(0)
-        df_input = np.sign(df_roll)
 
         day = self.time_index[slc]
         stock_today = [a[2:] for a in self.df_label.loc[day].index]
@@ -62,7 +61,7 @@ class DataLoader:
         # adj_today[stock_index,:][:,stock_index] = np.array(analyst_today)[stock_analyst_index,:][:,stock_analyst_index]
         # adj_today = adj_today + np.identity(len(stock_today)) # 令对角线为1
 
-        adf_mf_cs = self.get_mf_data_split(day.replace('-', ''), df_input, stock_index, gapdays=20)
+        adf_mf_cs = self.get_mf_data_split(day.replace('-', ''), self.df_input, stock_index, gapdays=20)
 
         adj_out = torch.tensor(adf_mf_cs, device=self.device)
         # adj_out = torch.tensor(self.np_adj[stock_index,:][:,stock_index], device=self.device)
@@ -86,7 +85,7 @@ class DataLoader:
         arr3 = arr2.reshape(1, -1)
         ans = arr1 / arr2 / arr3
         # ans = ans * (1 - np.diag(np.ones(ans.shape[0])))
-        return ans
+        return np.nan_to_num(ans)
     
     def get_mf_data_split(self, eddate, data, amask, gapdays=20,):
         arr = data.values

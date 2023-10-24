@@ -86,7 +86,7 @@ class DataLoader:
         arr3 = arr2.reshape(1, -1)
         ans = arr1 / arr2 / arr3
         # ans = ans * (1 - np.diag(np.ones(ans.shape[0])))
-        return ans
+        return np.nan_to_num(ans)
     
     def get_mf_data_split(self, eddate, data, amask, gapdays=20,):
         arr = data.values
