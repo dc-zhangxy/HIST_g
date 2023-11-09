@@ -31,9 +31,10 @@ from qlib.contrib.model.pytorch_transformer import Transformer
 from model2 import MLP, HIST   #model/ model2
 from gcn_models import GCN
 from hist_gcn_model import HIST_GCN
+from hist_gat_model import HIST_GAT
 from utils import metric_fn, mse
 # from dataloader_analyst import DataLoader
-from dataloader_flow import DataLoader
+# from dataloader_flow import DataLoader
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -67,6 +68,8 @@ def get_model(model_name):
     
     if model_name.upper() == 'GCN':
         return HIST_GCN #GCN
+    if model_name.upper() == 'HGAT':
+        return HIST_GAT #HIST_GCN
 
     raise ValueError('unknown model name `%s`'%model_name)
 
@@ -111,24 +114,15 @@ def pprint(*args):
 
 
 global_step = -1
-def train_epoch(epoch, model, optimizer, train_loader, train_end_index, writer, args, stock2concepts = None):
+def train_epoch(epoch, model, optimizer, train_loader, train_end_index, writer, args):
 
     global global_step
-
     model.train()
 
-    # for i, slc in tqdm(train_loader.iter_batch(), total=train_loader.batch_length):
     for slc in range(train_end_index):
         global_step += 1
         feature, label, adj , stock_index, day_index = train_loader.get(slc)
-        # feature, label, market_value , stock_index, index = train_loader.get(slc)
-        # if index[0][0].month < 7:
-        #     selection = str(index[0][0].year) +'0101'
-        # else:
-        #     selection = str(index[0][0].year) +'0701'
-        # stock2concept_matrix=stock2concepts[selection]
-        # if args.model_name == 'HIST':
-            # pred = model(feature, stock2concept_matrix[stock_index], market_value)
+
         if args.model_name == 'GCN':
             pred = model(feature, adj)
         else:
@@ -141,25 +135,16 @@ def train_epoch(epoch, model, optimizer, train_loader, train_end_index, writer, 
         optimizer.step()
 
 
-def test_epoch(epoch, model, test_loader,test_end_index, writer, args, stock2concepts=None, prefix='Test'):
+def test_epoch(epoch, model, test_loader,test_end_index, writer, args, prefix='Test'):
 
     model.eval()
-
     losses = []
     preds = []
 
-    # for i, slc in tqdm(test_loader.iter_daily(), desc=prefix, total=test_loader.daily_length):
     for slc in range(test_end_index):
         feature, label, adj , stock_today, day_index = test_loader.get(slc)
-        # feature, label, market_value, stock_index, index = test_loader.get(slc)
-        # if index[0][0].month < 7:
-        #     selection = str(index[0][0].year) +'0101'
-        # else:
-        #     selection = str(index[0][0].year) +'0701'
-        # stock2concept_matrix=stock2concepts[selection]
+
         with torch.no_grad():
-            # if args.model_name == 'HIST':
-            #     pred = model(feature, stock2concept_matrix[stock_index], market_value)
             if args.model_name == 'GCN':
                 pred = model(feature, adj)
             else:
@@ -185,23 +170,14 @@ def test_epoch(epoch, model, test_loader,test_end_index, writer, args, stock2con
 
     return np.mean(losses), scores, precision, recall, ic, rank_ic
 
-def inference(model, data_loader, end_index, stock2concepts=None):
+def inference(model, data_loader, end_index):
 
     model.eval()
-
     preds = []
-    # for i, slc in tqdm(data_loader.iter_daily(), total=data_loader.daily_length):
+
     for slc in range(end_index):
         feature, label, adj , stock_today, day_index = data_loader.get(slc)
-        # feature, label, market_value, stock_index, index = data_loader.get(slc)
-        # if index[0][0].month < 7:
-        #     selection = str(index[0][0].year) +'0101'
-        # else:
-        #     selection = str(index[0][0].year) +'0701'
-        # stock2concept_matrix=stock2concepts[selection]
         with torch.no_grad():
-            # if args.model_name == 'HIST':
-            #     pred = model(feature, stock2concept_matrix[stock_index], market_value)
             if args.model_name == 'GCN':
                 pred = model(feature, adj)
             else:
@@ -227,11 +203,7 @@ def create_loaders(args, train_start_date):
     dataset = DatasetH(hanlder,segments)
     print(f'train: ({args.train_start_date}, {args.train_end_date}), valid: ({args.valid_start_date}, {args.valid_end_date}), test: ({args.test_start_date}, {args.test_end_date})')
     df_train, df_valid, df_test = dataset.prepare( ["train", "valid", "test"], col_set=["feature", "label"], data_key=DataHandlerLP.DK_L,)
-    # import pickle5 as pickle
-    # with open(args.market_value_path, "rb") as fh:
-    #     df_market_value = pickle.load(fh)
-    # #df_market_value = pd.read_pickle(args.market_value_path)
-    # df_market_value = df_market_value/1000000000
+
     train_time = df_train.reset_index()['datetime'].drop_duplicates().to_list()
     train_time_index = [str(t)[:10] for t in train_time]
     valid_time = df_valid.reset_index()['datetime'].drop_duplicates().to_list()
@@ -240,58 +212,50 @@ def create_loaders(args, train_start_date):
     test_time_index = [str(t)[:10] for t in test_time]
     # stock_index = np.load(args.stock_index, allow_pickle=True).item()
 
-    # data_set='csi800'
-    # data_dir = 'data/'
+    if args.adj_name == 'industry':
+        # data_set='csi800'
+        data_dir = 'data/'
 
-    # csi800 = pd.read_csv(provider_uri+'/instruments/csiall_industry.txt', sep='\t',header=None)
-    # csi800list = csi800[0].drop_duplicates().to_list() #  1804
+        csi800 = pd.read_csv(provider_uri+'/instruments/csiall_industry.txt', sep='\t',header=None)
+        csi800list = csi800[0].drop_duplicates().to_list() #  1804
 
-    # industry = pd.read_excel(data_dir+'industry.xlsm')  # 行业数据
-    # industry['stock_code2'] = [a[-2:]+a[:-3] for a in industry['stock_code']]
+        industry = pd.read_excel(data_dir+'industry.xlsm')  # 行业数据
+        industry['stock_code2'] = [a[-2:]+a[:-3] for a in industry['stock_code']]
 
-    # industry800 = industry[industry['stock_code2'].isin(csi800list)].reset_index(drop=True)
+        industry800 = industry[industry['stock_code2'].isin(csi800list)].reset_index(drop=True)
 
-    # stock800list = csi800list 
-    # len800 = len(stock800list)
-    # stock_dict = dict(zip(stock800list,range(len800)))
+        stock800list = csi800list 
+        len800 = len(stock800list)
+        stock_dict = dict(zip(stock800list,range(len800)))
 
-    # np_adj = np.zeros([len800,len800])
-    # for i in range(len800):
-    #     for j in range(len800):
-    #         if industry800['行业1'][i] == industry800['行业1'][j]:
-    #             np_adj[i,j] = 1.0
+        np_adj = np.zeros([len800,len800])
+        for i in range(len800):
+            for j in range(len800):
+                if industry800['行业1'][i] == industry800['行业1'][j]:
+                    np_adj[i,j] = 1.0
 
-    dir_ = 'data/inflow_trade.pkl'
-    # dir_ = 'data/adjacency_analyst.pkl' 
-    # dir_ = 'data/adj_myprod.pkl'
-    with open(dir_,'rb')as f: # 
-        adj_analyst = pickle.load(f)
-    # start_index = 0
-    # slc = slice(pd.Timestamp(args.train_start_date), pd.Timestamp(args.train_end_date))
-    # df_train['market_value'] = df_market_value[slc]
-    # df_train['market_value'] = df_train['market_value'].fillna(df_train['market_value'].mean())
-    # df_train['stock_index'] = 733
-    # df_train['stock_index'] = df_train.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
+        from dataloader_industry import DataLoader
+        train_loader = DataLoader(df_train["feature"], df_train["label"], np_adj, stock_dict, train_time_index, device = device)
+        valid_loader = DataLoader(df_valid["feature"], df_valid["label"], np_adj, stock_dict, valid_time_index, device = device)
+        test_loader = DataLoader(df_test["feature"], df_test["label"], np_adj, stock_dict, test_time_index, device = device)
 
-    train_loader = DataLoader(df_train["feature"], df_train["label"], adj_analyst, train_time_index, device = device)
+    else:
+        if args.adj_name == 'analyst':
+            dir_ = 'data/adjacency_analyst.pkl' 
+            from dataloader_analyst import DataLoader
+        elif args.adj_name == 'product':
+            dir_ = 'data/adj_myprod.pkl'
+            from dataloader_analyst import DataLoader
+        elif args.adj_name == 'inflow_trade':
+            dir_ = 'data/inflow_trade.pkl'
+            from dataloader_flow import DataLoader
 
-    # slc = slice(pd.Timestamp(args.valid_start_date), pd.Timestamp(args.valid_end_date))
-    # df_valid['market_value'] = df_market_value[slc]
-    # df_valid['market_value'] = df_valid['market_value'].fillna(df_train['market_value'].mean())
-    # df_valid['stock_index'] = 733
-    # df_valid['stock_index'] = df_valid.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
-    # start_index += len(df_valid.groupby(level=0).size())
-
-    valid_loader = DataLoader(df_valid["feature"], df_valid["label"], adj_analyst, valid_time_index, device = device)
-    
-    # slc = slice(pd.Timestamp(args.test_start_date), pd.Timestamp(args.test_end_date))
-    # df_test['market_value'] = df_market_value[slc]
-    # df_test['market_value'] = df_test['market_value'].fillna(df_train['market_value'].mean())
-    # df_test['stock_index'] = 733
-    # df_test['stock_index'] = df_test.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
-    # start_index += len(df_test.groupby(level=0).size())
-
-    test_loader = DataLoader(df_test["feature"], df_test["label"], adj_analyst, test_time_index, device = device)
+        with open(dir_,'rb')as f: # 
+            adj_analyst = pickle.load(f)
+        
+        train_loader = DataLoader(df_train["feature"], df_train["label"], adj_analyst, train_time_index, device = device)
+        valid_loader = DataLoader(df_valid["feature"], df_valid["label"], adj_analyst, valid_time_index, device = device)
+        test_loader = DataLoader(df_test["feature"], df_test["label"], adj_analyst, test_time_index, device = device)
 
     return train_loader, valid_loader, test_loader, len(train_time_index), len(valid_time_index), len(test_time_index)
 
@@ -347,19 +311,8 @@ def main(args):
     # train_loader, valid_loader, test_loader = create_loaders(args)
     pprint('loaders done')
     out_put_path_base = output_path
-    stock2concepts = None
-    # import pickle
-    # with open(args.stock2concept_matrix,'rb') as f:
-    #     stock2concepts=pickle.load(f)
-    # if args.model_name=='HIST':
-    #     for i in stock2concepts:
-    #         stock2concepts[i]=torch.Tensor(stock2concepts[i]).to(device)
-        
-#     stock2concept_matrix = np.load(args.stock2concept_matrix)
-#     if args.model_name == 'HIST':
-#         stock2concept_matrix = torch.Tensor(stock2concept_matrix).to(device)
-    for i in range(0,len(train_loaders)):
 
+    for i in range(0,len(train_loaders)):
         train_loader = train_loaders[i]
         train_ilens = train_lens[i]
         test_loader = test_loaders[i]
@@ -400,7 +353,7 @@ def main(args):
                 pprint('Running', times,'Epoch:', epoch)
 
                 pprint('training...')
-                train_epoch(epoch, model, optimizer, train_loader, train_ilens, writer, args, stock2concepts)
+                train_epoch(epoch, model, optimizer, train_loader, train_ilens, writer, args)
                 torch.save(model.state_dict(), output_path+'/model.bin.e'+str(epoch))
                 torch.save(optimizer.state_dict(), output_path+'/optimizer.bin.e'+str(epoch))
 
@@ -410,10 +363,10 @@ def main(args):
                 model.load_state_dict(avg_params)
 
                 pprint('evaluating...')
-                train_loss, train_score, train_precision, train_recall, train_ic, train_rank_ic = test_epoch(epoch, model, train_loader, train_ilens, writer, args, stock2concepts, prefix='Train')
-                val_loss, val_score, val_precision, val_recall, val_ic, val_rank_ic = test_epoch(epoch, model, valid_loader, valid_ilens, writer, args, stock2concepts, prefix='Valid')
+                train_loss, train_score, train_precision, train_recall, train_ic, train_rank_ic = test_epoch(epoch, model, train_loader, train_ilens, writer, args, prefix='Train')
+                val_loss, val_score, val_precision, val_recall, val_ic, val_rank_ic = test_epoch(epoch, model, valid_loader, valid_ilens, writer, args, prefix='Valid')
                 pprint('train_ic %.6f, valid_ic %.6f'%(train_ic, val_ic))
-                test_loss, test_score, test_precision, test_recall, test_ic, test_rank_ic = test_epoch(epoch, model, test_loader, test_ilens, writer, args, stock2concepts, prefix='Test')
+                test_loss, test_score, test_precision, test_recall, test_ic, test_rank_ic = test_epoch(epoch, model, test_loader, test_ilens, writer, args, prefix='Test')
 
                 pprint('train_loss %.6f, valid_loss %.6f, test_loss %.6f'%(train_loss, val_loss, test_loss))
                 pprint('train_score %.6f, valid_score %.6f, test_score %.6f'%(train_score, val_score, test_score))
@@ -448,7 +401,7 @@ def main(args):
             res = dict()
             for name in ['train', 'valid', 'test']:
 
-                pred= inference(model, eval(name+'_loader'), eval(name+'_ilens'),stock2concepts)
+                pred= inference(model, eval(name+'_loader'), eval(name+'_ilens'))
                 pred.to_pickle(output_path+'/pred.pkl.'+name+str(times))
 
                 precision, recall, ic, rank_ic = metric_fn(pred)
@@ -494,6 +447,111 @@ def main(args):
     pprint('finished.')
 
 
+def loadandinference(args):
+    pprint('create model...')
+    if args.model_name == 'SFM':
+        model = get_model(args.model_name)(d_feat = args.d_feat, output_dim = 32, freq_dim = 25, hidden_size = args.hidden_size, dropout_W = 0.5, dropout_U = 0.5, device = device)
+    elif args.model_name == 'ALSTM':
+        model = get_model(args.model_name)(args.d_feat, args.hidden_size, args.num_layers, args.dropout, 'LSTM')
+    elif args.model_name == 'Transformer':
+        model = get_model(args.model_name)(args.d_feat, args.hidden_size, args.num_layers, dropout=0.5)
+    elif args.model_name == 'HIST':
+        model = get_model(args.model_name)(d_feat = args.d_feat, num_layers = args.num_layers, K = args.K)
+    elif args.model_name == 'GCN':
+        model = get_model(args.model_name)()
+    else:
+        model = get_model(args.model_name)(d_feat = args.d_feat, num_layers = args.num_layers)
+
+    model.to(device)
+    output_path = args.outdir
+
+    best_param = output_path +'/rolling' + '2009-01-01' + '/model.bin'
+    model.load_state_dict(torch.load(best_param))
+    # model.eval()
+
+    pprint('loading data...')
+
+    newdataloader, new_ilens = create_newloader(args)
+    name = 'newdata'
+
+    pprint('inference...')
+
+    pred= inference(model, newdataloader, new_ilens)
+    pred.to_pickle(output_path+'/newdata_pred.pkl')
+
+    precision, recall, ic, rank_ic = metric_fn(pred)
+
+    pprint(('%s: IC %.6f Rank IC %.6f')%(
+                name, ic.mean(), rank_ic.mean()))
+    pprint(name, ': Precision ', precision)
+    pprint(name, ': Recall ', recall)
+
+
+def create_newloader(args):
+
+    start_time = datetime.datetime.strptime(args.new_start_date, '%Y-%m-%d')
+    end_time = datetime.datetime.strptime(args.new_end_date, '%Y-%m-%d')
+    # train_end_time = datetime.datetime.strptime(args.train_end_date, '%Y-%m-%d')
+    hanlder = {'class': 'Alpha360', 'module_path': 'qlib.contrib.data.handler', 'kwargs': {'start_time': start_time, 'end_time': end_time, 'fit_start_time': start_time, 'fit_end_time': start_time, 
+            'instruments': args.data_set, 'infer_processors': [{'class': 'RobustZScoreNorm', 'kwargs': {'fields_group': 'feature', 'clip_outlier': True}}, {'class': 'Fillna', 'kwargs': {'fields_group': 'feature'}}], 'learn_processors': [{'class': 'DropnaLabel'}, {'class': 'CSRankNorm', 'kwargs': {'fields_group': 'label'}}],
+            'label': [f'Ref($close,{-args.labels}) / Ref($close,-1) - 1']}}
+    
+    segments =  {'test': (args.new_start_date, args.new_end_date)}
+    dataset = DatasetH(hanlder,segments)
+
+    print(f'test: ({args.new_start_date}, {args.new_end_date})')
+    df_test = dataset.prepare( "test", col_set=["feature", "label"], data_key=DataHandlerLP.DK_L,)
+    
+    test_time = df_test.reset_index()['datetime'].drop_duplicates().to_list()
+    test_time_index = [str(t)[:10] for t in test_time]
+    # stock_index = np.load(args.stock_index, allow_pickle=True).item()
+
+    if args.adj_name == 'industry':
+        # data_set='csi800'
+        data_dir = 'data/'
+
+        csi800 = pd.read_csv(provider_uri+'/instruments/csiall_industry.txt', sep='\t',header=None)
+        csi800list = csi800[0].drop_duplicates().to_list() #  1804
+
+        industry = pd.read_excel(data_dir+'industry.xlsm')  # 行业数据
+        industry['stock_code2'] = [a[-2:]+a[:-3] for a in industry['stock_code']]
+
+        industry800 = industry[industry['stock_code2'].isin(csi800list)].reset_index(drop=True)
+
+        stock800list = csi800list 
+        len800 = len(stock800list)
+        stock_dict = dict(zip(stock800list,range(len800)))
+
+        np_adj = np.zeros([len800,len800])
+        for i in range(len800):
+            for j in range(len800):
+                if industry800['行业1'][i] == industry800['行业1'][j]:
+                    np_adj[i,j] = 1.0
+
+        from dataloader_industry import DataLoader
+        
+        test_loader = DataLoader(df_test["feature"], df_test["label"], np_adj, stock_dict, test_time_index, device = device)
+
+    else:
+        if args.adj_name == 'analyst':
+            dir_ = 'data/adjacency_analyst.pkl' 
+            from dataloader_analyst import DataLoader
+        elif args.adj_name == 'product':
+            dir_ = 'data/adj_myprod.pkl'
+            from dataloader_analyst import DataLoader
+        elif args.adj_name == 'inflow_trade':
+            dir_ = 'data/inflow_trade.pkl'
+            from dataloader_flow import DataLoader
+
+        with open(dir_,'rb')as f: # 
+            adj_analyst = pickle.load(f)
+        
+        test_loader = DataLoader(df_test["feature"], df_test["label"], adj_analyst, test_time_index, device = device)
+
+    return test_loader, len(test_time_index)
+
+
+
 class ParseConfigFile(argparse.Action):
 
     def __call__(self, parser, namespace, filename, option_string=None):
@@ -513,11 +571,12 @@ def parse_args():
 
     # model
     parser.add_argument('--model_name', default='HIST')
+    parser.add_argument('--adj_name', default='industry')
     parser.add_argument('--d_feat', type=int, default=6)
     parser.add_argument('--hidden_size', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=2)
     parser.add_argument('--dropout', type=float, default=0.0)
-    parser.add_argument('--K', type=int, default=1)
+    parser.add_argument('--K', type=int, default=3)
 
     # training
     parser.add_argument('--n_epochs', type=int, default=150)
@@ -540,6 +599,8 @@ def parse_args():
     parser.add_argument('--valid_end_date', default='2018-12-31')
     parser.add_argument('--test_start_date', default='2019-01-01')
     parser.add_argument('--test_end_date', default='2022-12-31')
+    parser.add_argument('--new_start_date', default='2023-01-01')
+    parser.add_argument('--new_end_date', default='2023-05-31')
     parser.add_argument('--labels', type=int, default=2)
 
     # other
@@ -564,5 +625,10 @@ def parse_args():
 if __name__ == '__main__':
 
     args = parse_args()
-    main(args)
+    Train = False
+
+    if Train:
+        main(args)
+    else:
+        loadandinference(args)
 
