@@ -27,7 +27,7 @@ from qlib.contrib.model.pytorch_gats import GATModel
 from qlib.contrib.model.pytorch_sfm import SFM_Model
 from qlib.contrib.model.pytorch_alstm import ALSTMModel
 from qlib.contrib.model.pytorch_transformer import Transformer
-from model2 import MLP, HIST   #model/ model2
+from hist_delpre_model import MLP, HIST   #model/ model2
 from gcn_models import GCN
 from utils import metric_fn, mse
 from dataloader_industry import DataLoader

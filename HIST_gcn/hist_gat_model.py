@@ -68,9 +68,9 @@ class GATModel(nn.Module):
         # hidden = out[:, -1, :]
         att_weight = self.cal_attention(hidden, hidden)
         hidden = att_weight.mm(hidden) + hidden
-        hidden = self.fc(hidden)
-        hidden = self.leaky_relu(hidden)
-        return self.fc_out(hidden).squeeze()
+        # hidden = self.fc(hidden)
+        # hidden = self.leaky_relu(hidden)
+        return hidden #self.fc_out(hidden).squeeze()
 
 
 
@@ -183,38 +183,11 @@ class HIST_GAT(nn.Module):
         # x = F.relu(self.gc1(x_hidden, adj.float()))  #  .to(torch.float32)
         # x = F.dropout(x, self.dropout, training=self.training) ## 
         # x = self.gc2(x, adj.float() )  #  .to(torch.float32)
-        x = self.GAT_model(x_hidden)
+        x = self.GAT_model(x_hidden)  # 1*2506
         # out = F.log_softmax(x, dim=1)
         gcn_shared_back = self.fc_gcn_back(x)
         output_gcn = self.fc_gcn_fore(x)
         output_gcn = self.leaky_relu(output_gcn)
-       
-        # market_value_matrix = market_value.reshape(market_value.shape[0], 1).repeat(1, concept_matrix.shape[1])
-        # stock_to_concept = concept_matrix * market_value_matrix
-        
-        # stock_to_concept_sum = torch.sum(stock_to_concept, 0).reshape(1, -1).repeat(stock_to_concept.shape[0], 1)
-        # stock_to_concept_sum = stock_to_concept_sum.mul(concept_matrix)
-
-        # stock_to_concept_sum = stock_to_concept_sum + (torch.ones(stock_to_concept.shape[0], stock_to_concept.shape[1]).to(device))
-        # stock_to_concept = stock_to_concept / stock_to_concept_sum
-        # hidden = torch.t(stock_to_concept).mm(x_hidden)
-        
-        # hidden = hidden[hidden.sum(1)!=0]
-        # stock_to_concept = x_hidden.mm(torch.t(hidden))
-        # stock_to_concept = self.softmax_s2t(stock_to_concept)
-        # hidden = torch.t(stock_to_concept).mm(x_hidden)
-        
-        # concept_to_stock = cal_cos_similarity(x_hidden, hidden) 
-        # concept_to_stock = self.softmax_t2s(concept_to_stock)
-
-        # p_shared_info = concept_to_stock.mm(hidden)
-        # p_shared_info = self.fc_ps(p_shared_info)
-
-        # p_shared_back = self.fc_ps_back(p_shared_info)
-        # output_ps = self.fc_ps_fore(p_shared_info)
-        # output_ps = self.leaky_relu(output_ps)
-
-        # pred_ps = self.fc_out_ps(output_ps).squeeze()
         
         # Hidden Concept Module
         h_shared_info = x_hidden - gcn_shared_back
