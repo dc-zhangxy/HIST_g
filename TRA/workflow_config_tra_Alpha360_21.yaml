@@ -41,9 +41,9 @@ tra_config: &tra_config
 
 model_config: &model_config
   input_size: 6
-  hidden_size: 64
+  hidden_size: 128
   num_layers: 2
-  rnn_arch: LSTM
+  rnn_arch: GRU #LSTM
   use_attn: True
   dropout: 0.0
 
@@ -70,16 +70,16 @@ port_analysis_config: &port_analysis_config
 task:
   model:
     class: TRAModel
-    module_path: qlib.contrib.model.pytorch_tra #src/model.py
+    module_path: src/pytorch_tra.py #qlib.contrib.model.pytorch_tra #
     kwargs:
       tra_config: *tra_config
       model_config: *model_config
       model_type: Transformer #RNN
-      lr: 1e-3
-      n_epochs: 100
+      lr: 2e-4 # 1e-3
+      n_epochs: 500
       max_steps_per_epoch:
-      early_stop: 20
-      logdir: output/Alpha360_label21_Ltransf_0630
+      early_stop: 30
+      logdir: output/Alpha360_label21_transh4
       seed: 0
       lamb: 1.0
       rho: 0.99
@@ -105,7 +105,7 @@ task:
         valid: [2017-01-01, 2018-09-30]
         test: [2019-01-01, 2023-12-31]
       seq_len: 60
-      horizon: 11
+      horizon: 21
       input_size: 6
       num_states: *num_states
       batch_size: 1024

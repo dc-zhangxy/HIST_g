@@ -632,9 +632,9 @@ class Transformer(nn.Module):
     def __init__(
         self,
         input_size=16,
-        hidden_size=64,
+        hidden_size=128,
         num_layers=2,
-        num_heads=2,
+        num_heads=4,
         dropout=0.0,
         **kwargs,
     ):
