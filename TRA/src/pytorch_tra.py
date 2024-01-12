@@ -100,7 +100,7 @@ class TRAModel(Model):
             np.random.seed(seed)
             torch.manual_seed(seed)
 
-        self.penalty_coef = 0.5
+        self.penalty_coef = 20
         self.eps = 1e-9
         self.model_config = model_config
         self.tra_config = tra_config

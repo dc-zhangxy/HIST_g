@@ -471,7 +471,7 @@ def parse_args():
 
     # data
     parser.add_argument('--data_set', type=str, default='csi100')
-    parser.add_argument('--pin_memory', action='store_false', default=True)
+    parser.add_argument('--pin_memory', action='store_false', default=False)
     parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
     parser.add_argument('--label', default='') # specify other labels
