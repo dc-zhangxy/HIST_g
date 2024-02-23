@@ -3,21 +3,18 @@ import numpy as np
 
 class DataLoader:
 
-    def __init__(self, df_feature, df_label, df_market_value, df_stock_index, batch_size=800, pin_memory=True, start_index = 0, device=None):
+    def __init__(self, df_feature, df_label, batch_size=800, pin_memory=True, start_index = 0, device=None):
 
         assert len(df_feature) == len(df_label)
 
         self.df_feature = df_feature.values
         self.df_label = df_label.values
-        self.df_market_value = df_market_value
-        self.df_stock_index = df_stock_index
+
         self.device = device
 
         if pin_memory:
             self.df_feature = torch.tensor(self.df_feature, dtype=torch.float, device=device)
             self.df_label = torch.tensor(self.df_label, dtype=torch.float, device=device)
-            self.df_market_value = torch.tensor(self.df_market_value, dtype=torch.float, device=device)
-            self.df_stock_index = torch.tensor(self.df_stock_index, dtype=torch.long, device=device)
 
         self.index = df_label.index
 
@@ -65,12 +62,10 @@ class DataLoader:
         indices = np.arange(len(self.daily_count))
         for i in indices:
             yield i, slice(self.daily_index[i], self.daily_index[i] + self.daily_count[i])
-        # for idx, count in zip(self.daily_index, self.daily_count):
-        #     yield slice(idx, idx + count) # NOTE: slice index will not cause copy
-
+       
     def get(self, slc):
-        outs = self.df_feature[slc], self.df_label[slc][:,0], self.df_market_value[slc], self.df_stock_index[slc]
-        # outs = self.df_feature[slc], self.df_label[slc]
+        outs = self.df_feature[slc], self.df_label[slc] 
+        # outs = self.df_feature[slc], self.df_label[slc][:,0],
 
         if not self.pin_memory:
             outs = tuple(torch.tensor(x, dtype=torch.float, device=self.device) for x in outs)

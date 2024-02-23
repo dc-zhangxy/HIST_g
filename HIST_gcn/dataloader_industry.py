@@ -43,7 +43,7 @@ class DataLoader:
         # outs = self.df_feature[slc], self.df_label[slc] ind = [1,2,3]
 
         # if not self.pin_memory:  # 每次放device还是一次性放的区别
-        outs = tuple(torch.tensor(x, device=self.device) for x in outs)
+        outs = tuple(torch.tensor(x, dtype=torch.float, device=self.device) for x in outs)
 
         return outs + (H, stock_today, day,)  # (self.index[slc],)
     
