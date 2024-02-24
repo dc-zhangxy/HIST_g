@@ -59,7 +59,7 @@ class DataLoader:
         # print('adf_mf_cs:',adf_mf_cs.sum())
         adj_today = pd.DataFrame(np.identity(len(stock_today)) ) # np.identity(len(stock_today)) # np.zeros([len(stock_today), len(stock_today)])
         adj_today.loc[stock_index, stock_index] = adf_mf_cs
-        adj_out = torch.tensor(np.array(adj_today), device=self.device)
+        adj_out = torch.tensor(np.array(adj_today), dtype=torch.float, device=self.device)
         # 这样赋值是失败的
         # adj_today[stock_index,:][:,stock_index] = adf_mf_cs #[stock_flow_index,:][:,stock_flow_index] 
         # adj_today = adj_today + np.identity(len(stock_today)) # 令对角线为1
@@ -76,7 +76,7 @@ class DataLoader:
         # outs = self.df_feature[slc], self.df_label[slc] ind = [1,2,3]
 
         # if not self.pin_memory:  # 每次放device还是一次性放的区别
-        outs = tuple(torch.tensor(x, dtype=torch.float,  device=self.device) for x in outs)
+        outs = tuple(torch.tensor(x, dtype=torch.float, device=self.device) for x in outs)
 
         return outs + (H, stock_today, day,)  # (self.index[slc],)
     

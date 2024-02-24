@@ -252,7 +252,7 @@ def create_loaders(args, train_start_date):
             from dataloader_analyst import DataLoader
         elif args.adj_name == 'inflow_trade':
             dir_ = 'data/inflow_trade.pkl'
-            from dataloader_flow import DataLoader
+            from dataloader_flow_2 import DataLoader
 
         with open(dir_,'rb')as f: # 
             adj_analyst = pickle.load(f)
