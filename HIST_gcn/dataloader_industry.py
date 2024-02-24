@@ -33,10 +33,10 @@ class DataLoader:
         day = self.time_index[slc]
         stock_today = self.df_label.loc[day].index
         stock_index = itemgetter(*stock_today)(self.stock_dict)
-        adj_out = torch.tensor(self.np_adj[stock_index,:][:,stock_index], device=self.device)
+        adj_out = torch.tensor(self.np_adj[stock_index,:][:,stock_index], dtype=torch.float, device=self.device)
         # print(adj_out.dtype) # torch.float64
         sumW = torch.einsum('ij->i', adj_out)
-        sumW[sumW==0] = 1
+        sumW[sumW==0] = 1.
         sumW = torch.diag(1/sumW)
         H = torch.mm(adj_out, sumW)
         outs = self.df_feature.loc[day].values, self.df_label.loc[day].values[:,0],

@@ -46,7 +46,6 @@ def metric_fn(preds):
 
     return precision, recall, ic, rank_ic
 
-
 def ic_metric(pred, label, weight=None):
     EPS = 1e-9
     # pred

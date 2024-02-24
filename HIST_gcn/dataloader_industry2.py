@@ -4,27 +4,19 @@ import pandas as pd
 import feather
 from sklearn.preprocessing import StandardScaler
 from operator import itemgetter
-from datetime import datetime
 
 
 class DataLoader:
 
-    def __init__(self, df_feature, df_label, pkl_inflow, time_index, device=None, pin_memory=False):
+    def __init__(self, df_feature, df_label, np_adj, ind_stock, time_index, device=None, pin_memory=False):
 
         assert len(df_feature) == len(df_label)
 
         self.df_feature = df_feature #.values
         self.df_label = df_label # .values
-        self.df_mf = pkl_inflow['inflow_trade']
-        self.df_roll = self.df_mf.rolling(3, min_periods=1).sum().fillna(0)
-        self.df_input = np.sign(self.df_roll)
-        self.flow_stock = self.df_mf.columns
-        self.flow_stock_dict = dict(zip(self.flow_stock, range(len(self.flow_stock)) ))
-        self.d_d2n = {v: k for k, v in enumerate(self.df_mf.index)}
-        # self.d_c2n = {v: k for k, v in enumerate(self.flow_stock)}
-        
-        # self.pkl_adj_timelist = list(pkl_adj.keys())
-        # self.stock_dict = stock_dict
+        self.np_adj = np_adj
+        self.ind_stock = ind_stock
+        self.ind_stock_dict = dict(zip(ind_stock,range(len(ind_stock))))
         self.device = device
         self.time_index = time_index
 
@@ -39,72 +31,41 @@ class DataLoader:
         self.pin_memory = pin_memory
 
     def get(self, slc):  # 之后需打乱batch顺序
-
         day = self.time_index[slc]
-        stock_today = [a[2:] for a in self.df_label.loc[day].index]
-
-        stock_dict = dict(zip(stock_today, range(len(stock_today))))
-        # for day_index in range(len(self.pkl_adj_timelist)):
-        #     if datetime.strptime(self.pkl_adj_timelist[day_index], "%Y%m%d") > datetime.strptime(day, "%Y-%m-%d") :  # 
-        #         break
-        # analyst_today = self.pkl_adj[self.pkl_adj_timelist[day_index-1]]
         
-        stock_inner = list(set(stock_today) & set(self.flow_stock))
-        stock_index = itemgetter(*stock_inner)(stock_dict)
-        # print('stock_inner:',len(stock_inner))
-        # print('stock_index:',len(stock_index))
-        stock_flow_index = itemgetter(*stock_inner)(self.flow_stock_dict)
-        # print('stock_flow_index:', len(stock_flow_index))
-        adf_mf_cs = self.get_mf_data_split(day.replace('-', ''), self.df_input, stock_flow_index, gapdays=20)
-        # print('adf_mf_cs:',adf_mf_cs.sum())
-        adj_today = pd.DataFrame(np.identity(len(stock_today)) ) # np.identity(len(stock_today)) # np.zeros([len(stock_today), len(stock_today)])
-        adj_today.loc[stock_index, stock_index] = adf_mf_cs
-        adj_out = torch.tensor(np.array(adj_today), device=self.device)
-        # 这样赋值是失败的
-        # adj_today[stock_index,:][:,stock_index] = adf_mf_cs #[stock_flow_index,:][:,stock_flow_index] 
-        # adj_today = adj_today + np.identity(len(stock_today)) # 令对角线为1
-        # print('adj_today:',adj_today.sum())
-        # adj_out = torch.tensor(np.array(adj_today), device=self.device)
+        stock_today = self.df_label.loc[day].index
+        stock_today_dict = dict(zip(stock_today,range(len(stock_today))))
+        
+        stock_inner = list(set(stock_today) & set(self.ind_stock))
+        
+        # stock_index = itemgetter(*stock_today)(self.ind_stock_dict)
+        stock_ind_index = itemgetter(*stock_inner)(self.ind_stock_dict)
+        stock_today_index = itemgetter(*stock_inner)(stock_today_dict)
+        
+        adj_today = pd.DataFrame(np.zeros([len(stock_today), len(stock_today)])) # np.identity(len(stock_today)) # 
+        adj_today.loc[stock_today_index, stock_today_index] = np.array(self.np_adj)[stock_ind_index,:][:,stock_ind_index]
+        # adj_today = np.array(adj_today) + np.identity(len(stock_today)) # 令对角线为1
+        adj_today = np.array(adj_today)
+        # np.fill_diagonal(B, 0)
+        adj_today[np.diag_indices(adj_today.shape[0])] = 1.
+        
         # adj_out = torch.tensor(self.np_adj[stock_index,:][:,stock_index], device=self.device)
+        adj_out= torch.tensor(adj_today, dtype=torch.float, device=self.device)
         # print(adj_out.dtype) # torch.float64
         sumW = torch.einsum('ij->i', adj_out)
-        sumW[sumW==0] = 1
+        sumW[sumW==0] = 1.
         sumW = torch.diag(1/sumW)
         H = torch.mm(adj_out, sumW)
-
+        
         outs = self.df_feature.loc[day].values, self.df_label.loc[day].values[:,0],
         # outs = self.df_feature[slc], self.df_label[slc] ind = [1,2,3]
 
         # if not self.pin_memory:  # 每次放device还是一次性放的区别
-        outs = tuple(torch.tensor(x, dtype=torch.float,  device=self.device) for x in outs)
+        outs = tuple(torch.tensor(x, dtype=torch.float, device=self.device) for x in outs)
 
         return outs + (H, stock_today, day,)  # (self.index[slc],)
     
-    def get_mf_cs_cos(self, arr):
-        arr = np.nan_to_num(arr)
-        arr1 = arr.T.dot(arr)
-        arr2 = ((arr**2).sum(axis=0)**0.5).reshape(-1, 1)
-        arr2[arr2==0] = 1
-        arr3 = arr2.reshape(1, -1)
-        ans = arr1 / arr2 / arr3
-        # ans = ans * (1 - np.diag(np.ones(ans.shape[0])))
-        return np.nan_to_num(ans)
-    
-    def get_mf_data_split(self, eddate, data, amask, gapdays=20,):
-        arr = data.values
 
-        # arr_ntrd = df_ntrd.values
-        stdate = data.index.min()  # '20061205'
-        codes = data.columns
-        n_ed = self.d_d2n[eddate] - self.d_d2n[stdate]
-        n_st = n_ed - gapdays + 1
-        arr0 = arr[n_st: n_ed+1]
-
-        # amask = (arr_ntrd[n_st] > 0)
-        arr_mf_cs = self.get_mf_cs_cos(arr0[:,amask])
-
-        # df_mf_cs = pd.DataFrame(arr_mf_cs, index=codes[amask], columns=codes[amask])
-        return arr_mf_cs
 
 if __name__ == '__main__':
 

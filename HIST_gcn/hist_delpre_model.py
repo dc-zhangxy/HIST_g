@@ -75,7 +75,7 @@ class HIST(nn.Module):
         cos_similarity[cos_similarity != cos_similarity] = 0
         return cos_similarity
 
-    def forward(self, x, concept_matrix, market_value):
+    def forward(self, x ):
         device = torch.device(torch.get_device(x))
         x_hidden = x.reshape(len(x), self.d_feat, -1) # [N, F, T]      
         x_hidden = x_hidden.permute(0, 2, 1) # [N, T, F]

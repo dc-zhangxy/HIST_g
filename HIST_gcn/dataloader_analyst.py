@@ -57,14 +57,17 @@ class DataLoader:
         # adj_out = torch.tensor(np.array(adj_today), device=self.device)
         # 这样赋值是失败的
         # adj_today[stock_index,:][:,stock_index] = np.array(analyst_today)[stock_analyst_index,:][:,stock_analyst_index]
-        adj_today = np.array(adj_today) + np.identity(len(stock_today)) # 令对角线为1
+        # adj_today = np.array(adj_today) + np.identity(len(stock_today)) # 令对角线为1
+        adj_today = np.array(adj_today)
+        # np.fill_diagonal(B, 0)
+        adj_today[np.diag_indices(adj_today.shape[0])] = 1.
         # print(analyst_today.sum().sum(), adj_today.sum())
 
-        adj_out = torch.tensor(adj_today, device=self.device)
+        adj_out = torch.tensor(adj_today, dtype=torch.float, device=self.device)
         # adj_out = torch.tensor(self.np_adj[stock_index,:][:,stock_index], device=self.device)
         # print(adj_out.dtype) # torch.float64
         sumW = torch.einsum('ij->i', adj_out)
-        sumW[sumW==0] = 1
+        sumW[sumW==0] = 1.
         sumW = torch.diag(1/sumW)
         H = torch.mm(adj_out, sumW)
 

@@ -17,7 +17,9 @@ from dateutil.relativedelta import relativedelta
 from qlib.config import REG_US, REG_CN
 # from dateutil.relativedelta import relativedelta
 # provider_uri = "~/.qlib/qlib_data/us_data"  # target_dir
-provider_uri = "../data/cn_data_updated"  # target_dir
+# provider_uri = "../data/cn_data_updated"  # target_dir
+provider_uri = "../datafolder/cn_data_updated"  # target_dir
+# provider_uri = "/home/zhangxinyi/HIST_g/datafolder/cn_data_updated"
 qlib.init(provider_uri=provider_uri, region=REG_CN)
 from qlib.data.dataset import DatasetH
 from qlib.data.dataset.handler import DataHandlerLP
@@ -32,7 +34,7 @@ from hist_delpre_model import MLP, HIST   #model/ model2
 from gcn_models import GCN
 from hist_gcn_model import HIST_GCN
 from hist_gat_model import HIST_GAT
-from utils import metric_fn, mse
+from utils import metric_fn, mse, ic_loss
 # from dataloader_analyst import DataLoader
 # from dataloader_flow import DataLoader
 
@@ -97,7 +99,7 @@ def average_params(params_list):
 
 def loss_fn(pred, label, args):
     mask = ~torch.isnan(label)
-    return mse(pred[mask], label[mask])
+    return ic_loss(pred[mask], label[mask]) # mse
 
 
 global_log_file = None
@@ -197,7 +199,9 @@ def create_loaders(args, train_start_date):
     end_time = datetime.datetime.strptime(args.test_end_date, '%Y-%m-%d')
     train_end_time = datetime.datetime.strptime(args.train_end_date, '%Y-%m-%d')
     hanlder = {'class': 'Alpha360', 'module_path': 'qlib.contrib.data.handler', 'kwargs': {'start_time': start_time, 'end_time': end_time, 'fit_start_time': start_time, 'fit_end_time': train_end_time, 
-            'instruments': args.data_set, 'infer_processors': [{'class': 'RobustZScoreNorm', 'kwargs': {'fields_group': 'feature', 'clip_outlier': True}}, {'class': 'Fillna', 'kwargs': {'fields_group': 'feature'}}], 'learn_processors': [{'class': 'DropnaLabel'}, {'class': 'CSRankNorm', 'kwargs': {'fields_group': 'label'}}],
+            'instruments': args.data_set, 
+            'infer_processors': [{'class': 'RobustZScoreNorm', 'kwargs': {'fields_group': 'feature', 'clip_outlier': True}}, {'class': 'Fillna', 'kwargs': {'fields_group': 'feature'}}], 
+            'learn_processors': [{'class': 'DropnaLabel'}, {'class': 'CSRankNorm', 'kwargs': {'fields_group': 'label'}}],
             'label': [f'Ref($close,{-args.labels}) / Ref($close,-1) - 1']}}
     segments =  { 'train': (args.train_start_date, args.train_end_date), 'valid': (args.valid_start_date, args.valid_end_date), 'test': (args.test_start_date, args.test_end_date)}
     dataset = DatasetH(hanlder,segments)
@@ -226,7 +230,7 @@ def create_loaders(args, train_start_date):
 
         stock800list = csi800list 
         len800 = len(stock800list)
-        stock_dict = dict(zip(stock800list,range(len800)))
+        # stock_dict = dict(zip(stock800list,range(len800)))
 
         np_adj = np.zeros([len800,len800])
         for i in range(len800):
@@ -234,10 +238,10 @@ def create_loaders(args, train_start_date):
                 if industry800['行业1'][i] == industry800['行业1'][j]:
                     np_adj[i,j] = 1.0
 
-        from dataloader_industry import DataLoader
-        train_loader = DataLoader(df_train["feature"], df_train["label"], np_adj, stock_dict, train_time_index, device = device)
-        valid_loader = DataLoader(df_valid["feature"], df_valid["label"], np_adj, stock_dict, valid_time_index, device = device)
-        test_loader = DataLoader(df_test["feature"], df_test["label"], np_adj, stock_dict, test_time_index, device = device)
+        from dataloader_industry2 import DataLoader
+        train_loader = DataLoader(df_train["feature"], df_train["label"], np_adj, csi800list, train_time_index, device = device)
+        valid_loader = DataLoader(df_valid["feature"], df_valid["label"], np_adj, csi800list, valid_time_index, device = device)
+        test_loader = DataLoader(df_test["feature"], df_test["label"], np_adj, csi800list, test_time_index, device = device)
 
     else:
         if args.adj_name == 'analyst':
@@ -354,8 +358,8 @@ def main(args):
 
                 pprint('training...')
                 train_epoch(epoch, model, optimizer, train_loader, train_ilens, writer, args)
-                torch.save(model.state_dict(), output_path+'/model.bin.e'+str(epoch))
-                torch.save(optimizer.state_dict(), output_path+'/optimizer.bin.e'+str(epoch))
+                # torch.save(model.state_dict(), output_path+'/model.bin.e'+str(epoch))
+                # torch.save(optimizer.state_dict(), output_path+'/optimizer.bin.e'+str(epoch))
 
                 params_ckpt = copy.deepcopy(model.state_dict())
                 params_list.append(params_ckpt)
@@ -493,7 +497,9 @@ def create_newloader(args):
     end_time = datetime.datetime.strptime(args.new_end_date, '%Y-%m-%d')
     # train_end_time = datetime.datetime.strptime(args.train_end_date, '%Y-%m-%d')
     hanlder = {'class': 'Alpha360', 'module_path': 'qlib.contrib.data.handler', 'kwargs': {'start_time': start_time, 'end_time': end_time, 'fit_start_time': start_time, 'fit_end_time': start_time, 
-            'instruments': args.data_set, 'infer_processors': [{'class': 'RobustZScoreNorm', 'kwargs': {'fields_group': 'feature', 'clip_outlier': True}}, {'class': 'Fillna', 'kwargs': {'fields_group': 'feature'}}], 'learn_processors': [{'class': 'DropnaLabel'}, {'class': 'CSRankNorm', 'kwargs': {'fields_group': 'label'}}],
+            'instruments': args.data_set, 
+            'infer_processors': [{'class': 'RobustZScoreNorm', 'kwargs': {'fields_group': 'feature', 'clip_outlier': True}}, {'class': 'Fillna', 'kwargs': {'fields_group': 'feature'}}], 
+            'learn_processors': [{'class': 'DropnaLabel'}, {'class': 'CSRankNorm', 'kwargs': {'fields_group': 'label'}}],
             'label': [f'Ref($close,{-args.labels}) / Ref($close,-1) - 1']}}
     
     segments =  {'test': (args.new_start_date, args.new_end_date)}
@@ -520,7 +526,7 @@ def create_newloader(args):
 
         stock800list = csi800list 
         len800 = len(stock800list)
-        stock_dict = dict(zip(stock800list,range(len800)))
+        # stock_dict = dict(zip(stock800list,range(len800)))
 
         np_adj = np.zeros([len800,len800])
         for i in range(len800):
@@ -528,9 +534,9 @@ def create_newloader(args):
                 if industry800['行业1'][i] == industry800['行业1'][j]:
                     np_adj[i,j] = 1.0
 
-        from dataloader_industry import DataLoader
+        from dataloader_industry2 import DataLoader
         
-        test_loader = DataLoader(df_test["feature"], df_test["label"], np_adj, stock_dict, test_time_index, device = device)
+        test_loader = DataLoader(df_test["feature"], df_test["label"], np_adj, csi800list, test_time_index, device = device)
 
     else:
         if args.adj_name == 'analyst':
@@ -570,7 +576,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # model
-    parser.add_argument('--model_name', default='HIST')
+    parser.add_argument('--model_name', default='GCN')
     parser.add_argument('--adj_name', default='industry')
     parser.add_argument('--d_feat', type=int, default=6)
     parser.add_argument('--hidden_size', type=int, default=128)
@@ -588,20 +594,20 @@ def parse_args():
     parser.add_argument('--repeat', type=int, default=1)
 
     # data
-    parser.add_argument('--data_set', type=str, default='csi100')
-    parser.add_argument('--pin_memory', action='store_false', default=True)
+    parser.add_argument('--data_set', type=str, default='all')
+    parser.add_argument('--pin_memory', action='store_false', default=False)
     parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
     parser.add_argument('--label', default='') # specify other labels
-    parser.add_argument('--train_start_date', default='2009-01-01') # 2009-01-01  2005-01-01
-    parser.add_argument('--train_end_date', default='2016-12-31')
+    parser.add_argument('--train_start_date', default='2005-01-01') # 2009-01-01  2005-01-01
+    parser.add_argument('--train_end_date', default='2016-11-30')
     parser.add_argument('--valid_start_date', default='2017-01-01')
-    parser.add_argument('--valid_end_date', default='2018-12-31')
+    parser.add_argument('--valid_end_date', default='2018-11-30')
     parser.add_argument('--test_start_date', default='2019-01-01')
-    parser.add_argument('--test_end_date', default='2022-12-31')
+    parser.add_argument('--test_end_date', default='2023-12-31')
     parser.add_argument('--new_start_date', default='2023-01-01')
     parser.add_argument('--new_end_date', default='2023-05-31')
-    parser.add_argument('--labels', type=int, default=2)
+    parser.add_argument('--labels', type=int, default=21)
 
     # other
     parser.add_argument('--seed', type=int, default=0)
@@ -614,7 +620,7 @@ def parse_args():
     parser.add_argument('--stock2concept_matrix', default='./data_2/stock2concept.pkl')
     parser.add_argument('--stock_index', default='./data_2/stock2index.npy')
 
-    parser.add_argument('--outdir', default='./output/all_rolling_concept_correct')
+    parser.add_argument('--outdir', default='./output/all_label21_GCNind1_icloss')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
@@ -625,7 +631,7 @@ def parse_args():
 if __name__ == '__main__':
 
     args = parse_args()
-    Train = False
+    Train = True
 
     if Train:
         main(args)

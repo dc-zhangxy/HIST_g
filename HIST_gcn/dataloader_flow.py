@@ -63,11 +63,11 @@ class DataLoader:
 
         adf_mf_cs = self.get_mf_data_split(day.replace('-', ''), self.df_input, stock_index, gapdays=20)
 
-        adj_out = torch.tensor(adf_mf_cs, device=self.device)
+        adj_out = torch.tensor(adf_mf_cs, dtype=torch.float, device=self.device)
         # adj_out = torch.tensor(self.np_adj[stock_index,:][:,stock_index], device=self.device)
         # print(adj_out.dtype) # torch.float64
         sumW = torch.einsum('ij->i', adj_out)
-        sumW[sumW==0] = 1
+        sumW[sumW==0] = 1.
         sumW = torch.diag(1/sumW)
         H = torch.mm(adj_out, sumW)
 
