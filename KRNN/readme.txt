@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=1 nohup python learn_label_hgat.py >> krnn.out &
