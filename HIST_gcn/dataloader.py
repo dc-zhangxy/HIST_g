@@ -3,7 +3,7 @@ import numpy as np
 
 class DataLoader:
 
-    def __init__(self, df_feature, df_label, batch_size=800, pin_memory=True, start_index = 0, device=None):
+    def __init__(self, df_feature, df_label, batch_size=-1, pin_memory=False, start_index = 0, device=None):
 
         assert len(df_feature) == len(df_label)
 

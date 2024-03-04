@@ -235,7 +235,7 @@ def create_loaders(args,train_start_date):
     # df_valid['stock_index'] = df_valid.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
     start_index += len(df_valid.groupby(level=0).size())
 
-    valid_loader = DataLoader(df_valid["feature"], df_valid["label"],  pin_memory=True, start_index=start_index, device = device)
+    valid_loader = DataLoader(df_valid["feature"], df_valid["label"],  pin_memory=False, start_index=start_index, device = device)
     
     # slc = slice(pd.Timestamp(args.test_start_date), pd.Timestamp(args.test_end_date))
     # df_test['market_value'] = df_market_value[slc]
@@ -244,7 +244,7 @@ def create_loaders(args,train_start_date):
     # df_test['stock_index'] = df_test.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
     start_index += len(df_test.groupby(level=0).size())
 
-    test_loader = DataLoader(df_test["feature"], df_test["label"], pin_memory=True, start_index=start_index, device = device)
+    test_loader = DataLoader(df_test["feature"], df_test["label"], pin_memory=False, start_index=start_index, device = device)
 
     return train_loader, valid_loader, test_loader
 
