@@ -183,10 +183,10 @@ class KRNNModel(nn.Module):
     def __init__(
         self, 
         fea_dim=6, 
-        cnn_dim=128, 
+        cnn_dim=8, 
         cnn_kernel_size=3, 
-        rnn_dim=128, 
-        rnn_dups=3, 
+        rnn_dim=8, 
+        rnn_dups=2, 
         rnn_layers=2, 
         dropout=0, 
         device= "cuda" if torch.cuda.is_available() else "cpu", 

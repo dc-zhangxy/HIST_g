@@ -403,7 +403,7 @@ def main(args):
 
             pprint('inference...')
             res = dict()
-            for name in ['train', 'valid', 'test']:
+            for name in ['test']:
 
                 pred= inference(model, eval(name+'_loader'), eval(name+'_ilens'))
                 pred.to_pickle(output_path+'/pred.pkl.'+name+str(times))
@@ -587,14 +587,14 @@ def parse_args():
     # training
     parser.add_argument('--n_epochs', type=int, default=150)
     parser.add_argument('--lr', type=float, default=2e-4)
-    parser.add_argument('--early_stop', type=int, default=15)
+    parser.add_argument('--early_stop', type=int, default=20)
     parser.add_argument('--smooth_steps', type=int, default=5)
     parser.add_argument('--metric', default='IC')
     parser.add_argument('--loss', default='mse')
     parser.add_argument('--repeat', type=int, default=1)
 
     # data
-    parser.add_argument('--data_set', type=str, default='all')
+    parser.add_argument('--data_set', type=str, default='all_industry')
     parser.add_argument('--pin_memory', action='store_false', default=False)
     parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)

@@ -103,7 +103,7 @@ def average_params(params_list):
 
 def loss_fn(pred, label, args):
     mask = ~torch.isnan(label)
-    return ic_loss(pred[mask], label[mask])
+    return mse(pred[mask], label[mask])
 
 
 global_log_file = None
@@ -401,7 +401,7 @@ def parse_args():
 
     # training
     parser.add_argument('--n_epochs', type=int, default=150)
-    parser.add_argument('--lr', type=float, default=2e-4)
+    parser.add_argument('--lr', type=float, default=1e-3)  # 2e-4
     parser.add_argument('--early_stop', type=int, default=20)
     parser.add_argument('--smooth_steps', type=int, default=5)
     parser.add_argument('--metric', default='IC')
@@ -409,16 +409,16 @@ def parse_args():
     parser.add_argument('--repeat', type=int, default=1)
 
     # data
-    parser.add_argument('--data_set', type=str, default='all')
+    parser.add_argument('--data_set', type=str, default='all_industry')
     parser.add_argument('--pin_memory', action='store_false', default=True)
-    parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
+    parser.add_argument('--batch_size', type=int, default=2000) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
-    parser.add_argument('--label', default='') # specify other labels
-    parser.add_argument('--train_start_date', default='2005-01-01') #2009-01-01
-    parser.add_argument('--train_end_date', default='2016-09-30') # 2016-12-31
-    parser.add_argument('--valid_start_date', default='2017-01-01') # 2017-01-01
-    parser.add_argument('--valid_end_date', default='2018-09-30') # 2018-12-31
-    parser.add_argument('--test_start_date', default='2019-01-01') # 2019-01-01
+    # parser.add_argument('--label', default='') # specify other labels
+    parser.add_argument('--train_start_date', default='2008-01-01') #2005-01-01
+    parser.add_argument('--train_end_date', default='2014-12-31') # 2016-09-30
+    parser.add_argument('--valid_start_date', default='2015-01-01') # 2017-01-01
+    parser.add_argument('--valid_end_date', default='2016-12-31') # 2018-09-30
+    parser.add_argument('--test_start_date', default='2017-01-01') # 2019-01-01
     parser.add_argument('--test_end_date', default='2023-12-31') # 2022-12-31
     parser.add_argument('--labels', type=int, default=21)
 
@@ -433,7 +433,7 @@ def parse_args():
     # parser.add_argument('--stock2concept_matrix', default='./data_2/stock2concept.pkl')
     # parser.add_argument('--stock_index', default='./data_2/stock2index.npy')
 
-    parser.add_argument('--outdir', default='./output/all_label21to1_KRNN_128_icloss')
+    parser.add_argument('--outdir', default='./output/all_label21to1_KRNN')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
