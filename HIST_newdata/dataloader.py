@@ -73,6 +73,6 @@ class DataLoader:
         # outs = self.df_feature[slc], self.df_label[slc]
 
         if not self.pin_memory:
-            outs = tuple(torch.tensor(x, dtype=torch.float, device=self.device) for x in outs)
+            outs = tuple(torch.tensor(x, device=self.device) for x in outs)
 
         return outs + (self.index[slc],)
