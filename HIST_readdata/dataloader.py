@@ -69,8 +69,8 @@ class DataLoader:
         #     yield slice(idx, idx + count) # NOTE: slice index will not cause copy
 
     def get(self, slc):
-        outs = self.df_feature[slc], self.df_label[slc][:,0], self.df_market_value[slc], self.df_stock_index[slc]
-        # outs = self.df_feature[slc], self.df_label[slc]
+        outs = self.df_feature[slc], self.df_label[slc], self.df_market_value[slc], self.df_stock_index[slc]
+        # outs = self.df_feature[slc], self.df_label[slc] # self.df_label[slc][:,0]
 
         if not self.pin_memory:
             outs = tuple(torch.tensor(x, device=self.device) for x in outs)

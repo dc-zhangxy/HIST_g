@@ -1,5 +1,5 @@
 import torch
-import torch.nn as nn
+# import torch.nn as nn
 import torch.optim as optim
 import os
 import copy
@@ -10,23 +10,23 @@ import collections
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-import qlib
+# import qlib
 # regiodatetimeG_CN, REG_US]
-from dateutil.relativedelta import relativedelta
-from qlib.config import REG_US, REG_CN
-from dateutil.relativedelta import relativedelta
+# from dateutil.relativedelta import relativedelta
+# from qlib.config import REG_US, REG_CN
+# from dateutil.relativedelta import relativedelta
 # provider_uri = "~/.qlib/qlib_data/us_data"  # target_dir
-provider_uri = "../data/cn_data_updated"  # target_dir
-qlib.init(provider_uri=provider_uri, region=REG_CN)
-from qlib.data.dataset import DatasetH
-from qlib.data.dataset.handler import DataHandlerLP
+# provider_uri = "../data/cn_data_updated"  # target_dir
+# qlib.init(provider_uri=provider_uri, region=REG_CN)
+# from qlib.data.dataset import DatasetH
+# from qlib.data.dataset.handler import DataHandlerLP
 from torch.utils.tensorboard import SummaryWriter
-from qlib.contrib.model.pytorch_gru import GRUModel
-from qlib.contrib.model.pytorch_lstm import LSTMModel
-from qlib.contrib.model.pytorch_gats import GATModel
-from qlib.contrib.model.pytorch_sfm import SFM_Model
-from qlib.contrib.model.pytorch_alstm import ALSTMModel
-from qlib.contrib.model.pytorch_transformer import Transformer
+# from qlib.contrib.model.pytorch_gru import GRUModel
+# from qlib.contrib.model.pytorch_lstm import LSTMModel
+# from qlib.contrib.model.pytorch_gats import GATModel
+# from qlib.contrib.model.pytorch_sfm import SFM_Model
+# from qlib.contrib.model.pytorch_alstm import ALSTMModel
+# from qlib.contrib.model.pytorch_transformer import Transformer
 from model import MLP, HIST
 from utils import metric_fn, mse
 from dataloader import DataLoader
@@ -40,24 +40,6 @@ def get_model(model_name):
 
     if model_name.upper() == 'MLP':
         return MLP
-
-    if model_name.upper() == 'LSTM':
-        return LSTMModel
-
-    if model_name.upper() == 'GRU':
-        return GRUModel
-    
-    if model_name.upper() == 'GATS':
-        return GATModel
-
-    if model_name.upper() == 'SFM':
-        return SFM_Model
-
-    if model_name.upper() == 'ALSTM':
-        return ALSTMModel
-    
-    if model_name.upper() == 'TRANSFORMER':
-        return Transformer
 
     if model_name.upper() == 'HIST':
         return HIST
@@ -255,7 +237,7 @@ def get_year_month(start_date,end_date):
         if month_tmp == 0:
             month_tmp = 12
             year_tmp -= 1
-        cur_date = datetime.strptime(f'{year_tmp}-{month_tmp}', '%Y-%m')
+        cur_date = datetime.datetime.strptime(f'{year_tmp}-{month_tmp}', '%Y-%m')
         interval_date = cur_date.strftime('%Y-%m')
         cur_ym.append(interval_date)
     return cur_ym
@@ -315,19 +297,28 @@ def create_loaders(args,train_start_date):
     # with open(args.market_value_path, "rb") as fh:
     #     df_market_value = pickle.load(fh)
     
-    df_label = pd.read_pickle(args.label_path)
+    df_close = pd.read_pickle(args.close_path).rename(columns={'trade_dt':'end_date', 's_info_windcode':'stock_code', 's_dq_adjclose': 'Close'})
     
-    df_train = pd.merge(df_train, df_label, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
-    df_valid = pd.merge(df_valid, df_label, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
-    df_test = pd.merge(df_test, df_label, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
+    def calculate_future_returns(group, days=5):
+        group['label'] = group['Close'].shift(-days) / group['Close'] - 1
+        return group
+    
+    df_close = df_close.sort_values(['end_date','stock_code'])
+    label_df = df_close.groupby('stock_code').apply(calculate_future_returns)
+    label_df = label_df.drop(['Close'],axis=1).dropna().reset_index(drop=True)
+    
+    df_train = pd.merge(df_train, label_df, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
+    df_valid = pd.merge(df_valid, label_df, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
+    df_test = pd.merge(df_test, label_df, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
         
     df_market_value = pd.read_pickle(args.market_value_path)
-    
     df_market_value = df_market_value/1000000000
+    
     stock_index = np.load(args.stock_index_path, allow_pickle=True).item()
 
     start_index = 0
-    slc = slice(pd.Timestamp(args.train_start_date), pd.Timestamp(args.train_end_date))
+    # slc = slice(pd.Timestamp(args.train_start_date), pd.Timestamp(args.train_end_date))
+    slc = slice(args.train_start_date, args.train_end_date)
     df_train['market_value'] = df_market_value[slc]
     df_train['market_value'] = df_train['market_value'].fillna(df_train['market_value'].mean())
     df_train['stock_index'] = 733
@@ -335,7 +326,8 @@ def create_loaders(args,train_start_date):
 
     train_loader = DataLoader(df_train.iloc[:,:-3], df_train["label"], df_train['market_value'], df_train['stock_index'], batch_size=args.batch_size, pin_memory=args.pin_memory, start_index=start_index, device = device)
 
-    slc = slice(pd.Timestamp(args.valid_start_date), pd.Timestamp(args.valid_end_date))
+    # slc = slice(pd.Timestamp(args.valid_start_date), pd.Timestamp(args.valid_end_date))
+    slc = slice(args.valid_start_date, args.valid_end_date)
     df_valid['market_value'] = df_market_value[slc]
     df_valid['market_value'] = df_valid['market_value'].fillna(df_train['market_value'].mean())
     df_valid['stock_index'] = 733
@@ -344,7 +336,8 @@ def create_loaders(args,train_start_date):
 
     valid_loader = DataLoader(df_valid.iloc[:,:-3], df_valid["label"], df_valid['market_value'], df_valid['stock_index'], pin_memory=False, start_index=start_index, device = device)
     
-    slc = slice(pd.Timestamp(args.test_start_date), pd.Timestamp(args.test_end_date))
+    # slc = slice(pd.Timestamp(args.test_start_date), pd.Timestamp(args.test_end_date))
+    slc = slice(args.test_start_date, args.test_end_date)
     df_test['market_value'] = df_market_value[slc]
     df_test['market_value'] = df_test['market_value'].fillna(df_train['market_value'].mean())
     df_test['stock_index'] = 733
@@ -577,33 +570,33 @@ def parse_args():
     parser.add_argument('--repeat', type=int, default=1)
 
     # data
-    parser.add_argument('--data_set', type=str, default='csiall')
+    parser.add_argument('--data_set', type=str, default='all')
     parser.add_argument('--pin_memory', action='store_false', default=False)
     parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
-    parser.add_argument('--label', default='') # specify other labels
-    parser.add_argument('--train_start_date', default='2009-01-01') #2009-01-01
+
+    parser.add_argument('--train_start_date', default='2007-01-01') #2009-01-01
     parser.add_argument('--train_end_date', default='2016-12-31') # 2016-12-31
     parser.add_argument('--valid_start_date', default='2017-01-01') # 2017-01-01
     parser.add_argument('--valid_end_date', default='2018-12-31') # 2018-12-31
     parser.add_argument('--test_start_date', default='2019-01-01') # 2019-01-01
-    parser.add_argument('--test_end_date', default='2022-12-31') # 2022-12-31
+    parser.add_argument('--test_end_date', default='2023-10-31') # 2022-12-31
     parser.add_argument('--labels', type=int, default=11)
 
     # other
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--annot', default='')
     parser.add_argument('--config', action=ParseConfigFile, default='')
-    parser.add_argument('--name', type=str, default='csi300_HIST')
+    parser.add_argument('--name', type=str, default='csi_HIST')
 
     # input for csi 
     parser.add_argument('--market_value_path', default='./data_2/stock2mkt07_24.pkl')
-    parser.add_argument('--stock2concept_matrix_path', default='./data_2/stock2concept12_6.pkl')
-    parser.add_argument('--stock_index_path', default='./data_2/stock2index_new.npy')
+    parser.add_argument('--stock2concept_matrix_path', default='./data_2/stock2concept12_6_time.pkl')
+    parser.add_argument('--stock_index_path', default='./data_2/stock2index5484.npy')
     parser.add_argument('--feature_path', default='./data_2/kbase6/')
-    parser.add_argument('--label_path', default='./data_2/EODPrices_adjclose.pkl')
+    parser.add_argument('--close_path', default='./data_2/EODPrices_adjclose.pkl')
 
-    parser.add_argument('--outdir', default='./output/csiall_HIST_label11to1')
+    parser.add_argument('--outdir', default='./output/all_HIST_label11')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
