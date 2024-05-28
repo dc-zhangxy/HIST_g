@@ -317,8 +317,8 @@ def create_loaders(args,train_start_date):
     stock_index = np.load(args.stock_index_path, allow_pickle=True).item()
 
     start_index = 0
-    # slc = slice(pd.Timestamp(args.train_start_date), pd.Timestamp(args.train_end_date))
-    slc = slice(args.train_start_date, args.train_end_date)
+    slc = slice(pd.Timestamp(args.train_start_date), pd.Timestamp(args.train_end_date))
+    # slc = slice(args.train_start_date, args.train_end_date)
     df_train['market_value'] = df_market_value[slc]
     df_train['market_value'] = df_train['market_value'].fillna(df_train['market_value'].mean())
     df_train['stock_index'] = 733
@@ -326,8 +326,8 @@ def create_loaders(args,train_start_date):
 
     train_loader = DataLoader(df_train.iloc[:,:-3], df_train["label"], df_train['market_value'], df_train['stock_index'], batch_size=args.batch_size, pin_memory=args.pin_memory, start_index=start_index, device = device)
 
-    # slc = slice(pd.Timestamp(args.valid_start_date), pd.Timestamp(args.valid_end_date))
-    slc = slice(args.valid_start_date, args.valid_end_date)
+    slc = slice(pd.Timestamp(args.valid_start_date), pd.Timestamp(args.valid_end_date))
+    # slc = slice(args.valid_start_date, args.valid_end_date)
     df_valid['market_value'] = df_market_value[slc]
     df_valid['market_value'] = df_valid['market_value'].fillna(df_train['market_value'].mean())
     df_valid['stock_index'] = 733
@@ -336,8 +336,8 @@ def create_loaders(args,train_start_date):
 
     valid_loader = DataLoader(df_valid.iloc[:,:-3], df_valid["label"], df_valid['market_value'], df_valid['stock_index'], pin_memory=False, start_index=start_index, device = device)
     
-    # slc = slice(pd.Timestamp(args.test_start_date), pd.Timestamp(args.test_end_date))
-    slc = slice(args.test_start_date, args.test_end_date)
+    slc = slice(pd.Timestamp(args.test_start_date), pd.Timestamp(args.test_end_date))
+    # slc = slice(args.test_start_date, args.test_end_date)
     df_test['market_value'] = df_market_value[slc]
     df_test['market_value'] = df_test['market_value'].fillna(df_train['market_value'].mean())
     df_test['stock_index'] = 733
@@ -590,7 +590,7 @@ def parse_args():
     parser.add_argument('--name', type=str, default='csi_HIST')
 
     # input for csi 
-    parser.add_argument('--market_value_path', default='./data_2/stock2mkt07_24.pkl')
+    parser.add_argument('--market_value_path', default='./data_2/stock2mkt07_24_r_32.pkl')
     parser.add_argument('--stock2concept_matrix_path', default='./data_2/stock2concept12_6_time.pkl')
     parser.add_argument('--stock_index_path', default='./data_2/stock2index5484.npy')
     parser.add_argument('--feature_path', default='./data_2/kbase6/')
