@@ -31,17 +31,22 @@ def cal_convariance(x, y): # the 2nd dimension of x and y are the same
 
 def metric_fn(preds):
     preds = preds[~np.isnan(preds['label'])]
+    # print(preds)
+    # print(preds.shape)
     precision = {}
     recall = {}
-    temp = preds.groupby(level='datetime').apply(lambda x: x.sort_values(by='score', ascending=False))
-    if len(temp.index[0]) > 2:
-        temp = temp.reset_index(level =0).drop('datetime', axis = 1)
+    temp = preds.groupby(level='datetime', group_keys=False).apply(lambda x: x.sort_values(by='score', ascending=False))
+    # print(temp.shape)
+    # print(temp.index)
+    
+    # if len(temp.index[0]) > 2:
+    #     temp = temp.reset_index(level =0).drop('datetime', axis = 1)
         
     for k in [1, 3, 5, 10, 20, 30, 50, 100]:
-        precision[k] = temp.groupby(level='datetime').apply(lambda x:(x.label[:k]>0).sum()/k).mean()
-        recall[k] = temp.groupby(level='datetime').apply(lambda x:(x.label[:k]>0).sum()/(x.label>0).sum()).mean()
+        precision[k] = temp.groupby(level='datetime', group_keys=False).apply(lambda x:(x.label[:k]>0).sum()/k).mean()
+        recall[k] = temp.groupby(level='datetime', group_keys=False).apply(lambda x:(x.label[:k]>0).sum()/(x.label>0).sum()).mean()
 
-    ic = preds.groupby(level='datetime').apply(lambda x: x.label.corr(x.score)).mean()
-    rank_ic = preds.groupby(level='datetime').apply(lambda x: x.label.corr(x.score, method='spearman')).mean()
+    ic = preds.groupby(level='datetime', group_keys=False).apply(lambda x: x.label.corr(x.score)).mean()
+    rank_ic = preds.groupby(level='datetime', group_keys=False).apply(lambda x: x.label.corr(x.score, method='spearman')).mean()
 
     return precision, recall, ic, rank_ic

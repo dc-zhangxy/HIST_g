@@ -10,6 +10,7 @@ import collections
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import pickle
 # import qlib
 # regiodatetimeG_CN, REG_US]
 # from dateutil.relativedelta import relativedelta
@@ -96,6 +97,12 @@ def train_epoch(epoch, model, optimizer, train_loader, writer, args, stock2conce
     for i, slc in tqdm(train_loader.iter_batch(), total=train_loader.batch_length):
         global_step += 1
         feature, label, market_value , stock_index, index = train_loader.get(slc)
+        # print(feature.shape, label.shape, market_value.shape )
+        # print(feature)
+        # print(label)
+        # print(market_value)
+        # print(stock_index)
+        # print(index)
         # 考虑公告期
         if index[0][0] <= datetime.datetime(2009,4,30): # 第一个数据是20081231因此只能在20090430之后使用
             stock2concept_matrix = torch.zeros([6000,5]).to(device)
@@ -170,7 +177,9 @@ def test_epoch(epoch, model, test_loader, writer, args, stock2concepts=None, pre
                 pred = model(feature)
             loss = loss_fn(pred, label, args)
             preds.append(pd.DataFrame({ 'score': pred.cpu().numpy(), 'label': label.cpu().numpy(), }, index=index))
-
+            # print(preds)
+            # print(index)
+            
         losses.append(loss.item())
     #evaluate
     preds = pd.concat(preds, axis=0)
@@ -258,31 +267,37 @@ def create_loaders(args,train_start_date):
     # segments =  { 'train': (args.train_start_date, args.train_end_date), 'valid': (args.valid_start_date, args.valid_end_date), 'test': (args.test_start_date, args.test_end_date)}
     # dataset = DatasetH(hanlder,segments)
     # print(f'train: ({args.train_start_date}, {args.train_end_date}), valid: ({args.valid_start_date}, {args.valid_end_date}), test: ({args.test_start_date}, {args.test_end_date})')
-    feature = ['close','high','low','open','volume','vwap']
+    feature = args.feature_list #['close','high','low','open','volume','vwap']
     
     df_train = pd.DataFrame()
     for y in train_time_list:
         c0 = pd.read_feather(args.feature_path + feature[0] +'_'+str(y)+'.feather')
+        # print(y, c0.shape)
         for fe in feature[1:]:
-            h0 = pd.read_feather(args.feature_path + fe +'_2007-01.feather')
+            h0 = pd.read_feather(args.feature_path + fe +'_'+str(y)+'.feather')
             c0 = pd.merge(c0,h0, on = ['end_date','stock_code'])
+            # print(fe, c0.shape)
         df_train = pd.concat([df_train, c0])
+        # print(df_train.shape)
+    
         
     df_valid = pd.DataFrame()
     for y in valid_time_list:
         c0 = pd.read_feather(args.feature_path + feature[0] +'_'+str(y)+'.feather')
         for fe in feature[1:]:
-            h0 = pd.read_feather(args.feature_path + fe +'_2007-01.feather')
+            h0 = pd.read_feather(args.feature_path + fe +'_'+str(y)+'.feather')
             c0 = pd.merge(c0,h0, on = ['end_date','stock_code'])
         df_valid = pd.concat([df_valid, c0])
+    # print(df_valid)
         
     df_test = pd.DataFrame()
     for y in test_time_list:
         c0 = pd.read_feather(args.feature_path + feature[0] +'_'+str(y)+'.feather')
         for fe in feature[1:]:
-            h0 = pd.read_feather(args.feature_path + fe +'_2007-01.feather')
+            h0 = pd.read_feather(args.feature_path + fe +'_'+str(y)+'.feather')
             c0 = pd.merge(c0,h0, on = ['end_date','stock_code'])
         df_test = pd.concat([df_test, c0])
+    # print(df_test)
             
     # df_train, df_valid, df_test = dataset.prepare( ["train", "valid", "test"], col_set=["feature", "label"], data_key=DataHandlerLP.DK_L,)
     
@@ -296,16 +311,26 @@ def create_loaders(args,train_start_date):
     # import pickle5 as pickle
     # with open(args.market_value_path, "rb") as fh:
     #     df_market_value = pickle.load(fh)
+    df_test['end_date'] = pd.to_datetime(df_test['end_date']) 
+    df_valid['end_date'] = pd.to_datetime(df_valid['end_date']) 
+    df_train['end_date'] = pd.to_datetime(df_train['end_date']) 
     
     df_close = pd.read_pickle(args.close_path).rename(columns={'trade_dt':'end_date', 's_info_windcode':'stock_code', 's_dq_adjclose': 'Close'})
+    df_close['end_date'] = pd.to_datetime(df_close['end_date']) 
     
-    def calculate_future_returns(group, days=5):
-        group['label'] = group['Close'].shift(-days) / group['Close'] - 1
+    def calculate_future_returns(group, label_days=args.labels, begin_days = args.begin_days):
+        group['label'] = group['Close'].shift(-label_days).div(group['Close'].shift(-begin_days), axis=0) - 1
         return group
     
     df_close = df_close.sort_values(['end_date','stock_code'])
-    label_df = df_close.groupby('stock_code').apply(calculate_future_returns)
+    label_df = df_close.groupby('stock_code', group_keys=False).apply(calculate_future_returns)
     label_df = label_df.drop(['Close'],axis=1).dropna().reset_index(drop=True)
+
+    # CSRankNorm
+    label_df = label_df.set_index(['end_date','stock_code'])
+    xx = label_df['label'].groupby('end_date').rank(pct = True)
+    xx2 = xx.groupby(level=0, group_keys=False).apply(lambda x:(x-x.mean())/x.std())
+    label_df = xx2.reset_index()
     
     df_train = pd.merge(df_train, label_df, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
     df_valid = pd.merge(df_valid, label_df, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
@@ -324,7 +349,7 @@ def create_loaders(args,train_start_date):
     df_train['stock_index'] = 733
     df_train['stock_index'] = df_train.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
 
-    train_loader = DataLoader(df_train.iloc[:,:-3], df_train["label"], df_train['market_value'], df_train['stock_index'], batch_size=args.batch_size, pin_memory=args.pin_memory, start_index=start_index, device = device)
+    train_loader = DataLoader(df_train.iloc[:,:-3].astype(np.float32), df_train["label"].astype(np.float32), df_train['market_value'].astype(np.float32), df_train['stock_index'], batch_size=args.batch_size, pin_memory=args.pin_memory, start_index=start_index, device = device)
 
     slc = slice(pd.Timestamp(args.valid_start_date), pd.Timestamp(args.valid_end_date))
     # slc = slice(args.valid_start_date, args.valid_end_date)
@@ -334,7 +359,7 @@ def create_loaders(args,train_start_date):
     df_valid['stock_index'] = df_valid.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
     start_index += len(df_valid.groupby(level=0).size())
 
-    valid_loader = DataLoader(df_valid.iloc[:,:-3], df_valid["label"], df_valid['market_value'], df_valid['stock_index'], pin_memory=False, start_index=start_index, device = device)
+    valid_loader = DataLoader(df_valid.iloc[:,:-3].astype(np.float32), df_valid["label"].astype(np.float32), df_valid['market_value'].astype(np.float32), df_valid['stock_index'], pin_memory=False, start_index=start_index, device = device)
     
     slc = slice(pd.Timestamp(args.test_start_date), pd.Timestamp(args.test_end_date))
     # slc = slice(args.test_start_date, args.test_end_date)
@@ -344,7 +369,7 @@ def create_loaders(args,train_start_date):
     df_test['stock_index'] = df_test.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
     start_index += len(df_test.groupby(level=0).size())
 
-    test_loader = DataLoader(df_test.iloc[:,:-3], df_test["label"], df_test['market_value'], df_test['stock_index'], pin_memory=False, start_index=start_index, device = device)
+    test_loader = DataLoader(df_test.iloc[:,:-3].astype(np.float32), df_test["label"].astype(np.float32), df_test['market_value'].astype(np.float32), df_test['stock_index'], pin_memory=False, start_index=start_index, device = device)
 
     return train_loader, valid_loader, test_loader
 
@@ -394,7 +419,7 @@ def main(args):
     # train_loader, valid_loader, test_loader = create_loaders(args)
     pprint('loaders done')
     out_put_path_base = output_path
-    import pickle
+
     with open(args.stock2concept_matrix_path,'rb') as f:
         stock2concepts=pickle.load(f)
     # if args.model_name=='HIST':
@@ -575,14 +600,16 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
 
-    parser.add_argument('--train_start_date', default='2007-01-01') #2009-01-01
+    parser.add_argument('--train_start_date', default='2007-01-01') #2007-01-01
     parser.add_argument('--train_end_date', default='2016-12-31') # 2016-12-31
     parser.add_argument('--valid_start_date', default='2017-01-01') # 2017-01-01
     parser.add_argument('--valid_end_date', default='2018-12-31') # 2018-12-31
     parser.add_argument('--test_start_date', default='2019-01-01') # 2019-01-01
-    parser.add_argument('--test_end_date', default='2023-10-31') # 2022-12-31
+    parser.add_argument('--test_end_date', default='2023-10-31') # 2023-10-31
     parser.add_argument('--labels', type=int, default=11)
-
+    parser.add_argument('--begin_days', type=int, default=1)
+    parser.add_argument('--feature_list', default=['close','high','low','open','volume','vwap'])
+    
     # other
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--annot', default='')
@@ -590,13 +617,13 @@ def parse_args():
     parser.add_argument('--name', type=str, default='csi_HIST')
 
     # input for csi 
-    parser.add_argument('--market_value_path', default='./data_2/stock2mkt07_24_r_32.pkl')
-    parser.add_argument('--stock2concept_matrix_path', default='./data_2/stock2concept12_6_time.pkl')
-    parser.add_argument('--stock_index_path', default='./data_2/stock2index5484.npy')
-    parser.add_argument('--feature_path', default='./data_2/kbase6/')
-    parser.add_argument('--close_path', default='./data_2/EODPrices_adjclose.pkl')
+    parser.add_argument('--market_value_path', default='./data2/stock2mkt07_24_date.pkl')
+    parser.add_argument('--stock2concept_matrix_path', default='./data2/stock2concept12_6_t_5484.pkl')
+    parser.add_argument('--stock_index_path', default='./data2/stock2index._5484.npy')
+    parser.add_argument('--feature_path', default='./data2/kbase6/')
+    parser.add_argument('--close_path', default='./data2/EODPrices_adjclose.pkl')
 
-    parser.add_argument('--outdir', default='./output/all_HIST_label11')
+    parser.add_argument('--outdir', default='./output/all_HIST_label11to1_CSRankN')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()

@@ -19,7 +19,7 @@ class DataLoader:
             self.df_market_value = torch.tensor(self.df_market_value, dtype=torch.float, device=device)
             self.df_stock_index = torch.tensor(self.df_stock_index, dtype=torch.long, device=device)
 
-        self.index = df_label.index
+        self.index = df_feature.index
 
         self.batch_size = batch_size
         self.pin_memory = pin_memory
