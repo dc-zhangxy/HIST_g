@@ -22,7 +22,7 @@ import pickle
 # from qlib.data.dataset import DatasetH
 # from qlib.data.dataset.handler import DataHandlerLP
 from torch.utils.tensorboard import SummaryWriter
-# from qlib.contrib.model.pytorch_gru import GRUModel
+from qlib.contrib.model.pytorch_gru import GRUModel
 # from qlib.contrib.model.pytorch_lstm import LSTMModel
 # from qlib.contrib.model.pytorch_gats import GATModel
 # from qlib.contrib.model.pytorch_sfm import SFM_Model
@@ -41,6 +41,9 @@ def get_model(model_name):
 
     if model_name.upper() == 'MLP':
         return MLP
+    
+    if model_name.upper() == 'GRU':
+        return GRUModel
 
     if model_name.upper() == 'HIST':
         return HIST
@@ -131,6 +134,7 @@ def train_epoch(epoch, model, optimizer, train_loader, writer, args, stock2conce
             pred = model(feature, stock2concept_matrix[stock_index], market_value)
         else:
             pred = model(feature)
+            
         loss = loss_fn(pred, label, args)
 
         optimizer.zero_grad()
@@ -175,6 +179,7 @@ def test_epoch(epoch, model, test_loader, writer, args, stock2concepts=None, pre
                 pred = model(feature, stock2concept_matrix[stock_index], market_value)
             else:
                 pred = model(feature)
+                
             loss = loss_fn(pred, label, args)
             preds.append(pd.DataFrame({ 'score': pred.cpu().numpy(), 'label': label.cpu().numpy(), }, index=index))
             # print(preds)
@@ -229,6 +234,7 @@ def inference(model, data_loader, stock2concepts=None):
                 pred = model(feature, stock2concept_matrix[stock_index], market_value)
             else:
                 pred = model(feature)
+                
             preds.append(pd.DataFrame({ 'score': pred.cpu().numpy(), 'label': label.cpu().numpy(),  }, index=index))
 
     preds = pd.concat(preds, axis=0)
@@ -372,6 +378,107 @@ def create_loaders(args,train_start_date):
     test_loader = DataLoader(df_test.iloc[:,:-3].astype(np.float32), df_test["label"].astype(np.float32), df_test['market_value'].astype(np.float32), df_test['stock_index'], pin_memory=False, start_index=start_index, device = device)
 
     return train_loader, valid_loader, test_loader
+
+
+def loadandinference(args):
+    pprint('create model...')
+    if args.model_name == 'SFM':
+        model = get_model(args.model_name)(d_feat = args.d_feat, output_dim = 32, freq_dim = 25, hidden_size = args.hidden_size, dropout_W = 0.5, dropout_U = 0.5, device = device)
+    elif args.model_name == 'ALSTM':
+        model = get_model(args.model_name)(args.d_feat, args.hidden_size, args.num_layers, args.dropout, 'LSTM')
+    elif args.model_name == 'Transformer':
+        model = get_model(args.model_name)(args.d_feat, args.hidden_size, args.num_layers, dropout=0.5)
+    elif args.model_name == 'HIST':
+        model = get_model(args.model_name)(d_feat = args.d_feat, num_layers = args.num_layers, K = args.K)
+    elif args.model_name == 'GCN':
+        model = get_model(args.model_name)()
+    else:
+        model = get_model(args.model_name)(d_feat = args.d_feat, num_layers = args.num_layers)
+
+    # model.load_state_dict
+    model.to(device)
+    output_path = args.outdir
+    best_param = output_path +'/rolling' + '2007-01-01' + '/model.bin'
+    model.load_state_dict(torch.load(best_param))
+    # model.eval()
+
+    pprint('loading data...')
+    newdataloader = create_newloader(args)
+    name = 'newdata'
+    
+    with open(args.stock2concept_matrix_path,'rb') as f:
+        stock2concepts=pickle.load(f)
+
+    pprint('inference...')
+
+    pred = inference(model, newdataloader, stock2concepts)
+    pred.to_pickle(output_path+'/newdata_pred.pkl')
+
+    precision, recall, ic, rank_ic = metric_fn(pred)
+
+    pprint(('%s: IC %.6f Rank IC %.6f')%(
+                name, ic.mean(), rank_ic.mean()))
+    pprint(name, ': Precision ', precision)
+    pprint(name, ': Recall ', recall)
+
+
+def create_newloader(args):
+    train_start_time = datetime.datetime.strptime(args.new_start_date, '%Y-%m-%d')
+    train_end_time = datetime.datetime.strptime(args.new_end_date, '%Y-%m-%d')
+
+    train_time_list = get_year_month(train_start_time,train_end_time)
+
+    feature = args.feature_list #['close','high','low','open','volume','vwap']
+    
+    df_train = pd.DataFrame()
+    for y in train_time_list:
+        c0 = pd.read_feather(args.feature_path + feature[0] +'_'+str(y)+'.feather')
+        # print(y, c0.shape)
+        for fe in feature[1:]:
+            h0 = pd.read_feather(args.feature_path + fe +'_'+str(y)+'.feather')
+            c0 = pd.merge(c0,h0, on = ['end_date','stock_code'])
+            # print(fe, c0.shape)
+        df_train = pd.concat([df_train, c0])
+        # print(df_train.shape)
+    df_train['end_date'] = pd.to_datetime(df_train['end_date']) 
+    
+    df_close = pd.read_pickle(args.close_path).rename(columns={'trade_dt':'end_date', 's_info_windcode':'stock_code', 's_dq_adjclose': 'Close'})
+    df_close['end_date'] = pd.to_datetime(df_close['end_date']) 
+    
+    def calculate_future_returns(group, label_days=args.labels, begin_days = args.begin_days):
+        group['label'] = group['Close'].shift(-label_days).div(group['Close'].shift(-begin_days), axis=0) - 1
+        return group
+    
+    df_close = df_close.sort_values(['end_date','stock_code'])
+    label_df = df_close.groupby('stock_code', group_keys=False).apply(calculate_future_returns)
+    label_df = label_df.drop(['Close'],axis=1).dropna().reset_index(drop=True)
+
+    # CSRankNorm
+    label_df = label_df.set_index(['end_date','stock_code'])
+    xx = label_df['label'].groupby('end_date').rank(pct = True)
+    xx2 = xx.groupby(level=0, group_keys=False).apply(lambda x:(x-x.mean())/x.std())
+    label_df = xx2.reset_index()
+    
+    df_train = pd.merge(df_train, label_df, on = ['end_date','stock_code']).rename(columns={'end_date':'datetime', 'stock_code':'instrument'}).set_index(['datetime','instrument'])
+      
+    df_market_value = pd.read_pickle(args.market_value_path)
+    df_market_value = df_market_value/1000000000
+    
+    stock_index = np.load(args.stock_index_path, allow_pickle=True).item()
+
+    start_index = 0
+    slc = slice(pd.Timestamp(args.train_start_date), pd.Timestamp(args.train_end_date))
+    # slc = slice(args.train_start_date, args.train_end_date)
+    df_train['market_value'] = df_market_value[slc]
+    df_train['market_value'] = df_train['market_value'].fillna(df_train['market_value'].mean())
+    df_train['stock_index'] = 733
+    df_train['stock_index'] = df_train.index.get_level_values('instrument').map(stock_index).fillna(733).astype(int)
+
+    train_loader = DataLoader(df_train.iloc[:,:-3].astype(np.float32), df_train["label"].astype(np.float32), df_train['market_value'].astype(np.float32), df_train['stock_index'], batch_size=args.batch_size, pin_memory=args.pin_memory, start_index=start_index, device = device)
+
+    return train_loader #, len(test_time_index)
+
+
 
 
 def main(args):
@@ -578,7 +685,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # model
-    parser.add_argument('--model_name', default='HIST')
+    parser.add_argument('--model_name', default='HIST') # HIST
     parser.add_argument('--d_feat', type=int, default=6)
     parser.add_argument('--hidden_size', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=2)
@@ -610,6 +717,9 @@ def parse_args():
     parser.add_argument('--begin_days', type=int, default=1)
     parser.add_argument('--feature_list', default=['close','high','low','open','volume','vwap'])
     
+    parser.add_argument('--new_start_date', default='2023-01-01')
+    parser.add_argument('--new_end_date', default='2023-05-31')
+    
     # other
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--annot', default='')
@@ -634,5 +744,12 @@ def parse_args():
 if __name__ == '__main__':
 
     args = parse_args()
-    main(args)
+    # main(args)
+    
+    Train = True
+
+    if Train:
+        main(args)
+    else:
+        loadandinference(args)
 
