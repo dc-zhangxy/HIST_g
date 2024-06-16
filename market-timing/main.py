@@ -187,15 +187,15 @@ def create_loaders(args, train_data, val_data, test_data ):
     Feature = args.features # ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose', 's_dq_volume',] # 's_dq_amount']
     Columns = []
     # 新方法：除以前一天close
-    for f in Feature:
-        for i in range(args.days+1,0,-1):
-            Columns.append(f+'_lag_'+str(i))
+    # for f in Feature:
+    #     for i in range(args.days+1,0,-1):
+    #         Columns.append(f+'_lag_'+str(i))
         
     # 原始方法：除以当天close
-    # for f in Feature:
-    #     for i in range(args.days-1,0,-1):
-    #         Columns.append(f+'_lag_'+str(i))
-    #     Columns.append(f)
+    for f in Feature:
+        for i in range(args.days-1,0,-1):
+            Columns.append(f+'_lag_'+str(i))
+        Columns.append(f)
 
     dev_train = train_data.set_index(['datetime', 'instrument'])
     dev_valid = val_data.set_index(['datetime', 'instrument'])
@@ -573,7 +573,7 @@ def parse_args():
     parser.add_argument('--config', action=ParseConfigFile, default='')
     parser.add_argument('--name', type=str, default='all_transf') # 07_20
 
-    parser.add_argument('--outdir', default='./output/all_GRU17_label1_mom')
+    parser.add_argument('--outdir', default='./output/all_GRU17_label1')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
@@ -586,7 +586,7 @@ if __name__ == '__main__':
     args = parse_args()
     pprint('begin...')
     # 数据预处理
-    train, val, test = data_prepare2('train',args)
+    train, val, test = data_prepare('train',args)
     # test.to_csv('test.csv')
     # data_prepare('../test.txt','test',args)
     pprint('data prepare done...')
