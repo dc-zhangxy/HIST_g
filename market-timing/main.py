@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.optim import lr_scheduler
 import os
 import copy
 import json
@@ -74,7 +75,7 @@ def pprint(*args):
 
 
 global_step = -1
-def train_epoch(epoch, model, optimizer, train_loader, writer, args):
+def train_epoch(epoch, model, optimizer, scheduler, train_loader, writer, args):
 
     global global_step
 
@@ -91,6 +92,7 @@ def train_epoch(epoch, model, optimizer, train_loader, writer, args):
         loss.backward()
         torch.nn.utils.clip_grad_value_(model.parameters(), 3.)
         optimizer.step()
+        scheduler.step()
 
 
 def test_epoch(epoch, model, test_loader, writer, args, prefix='Test'):
@@ -164,11 +166,6 @@ def loadandinference(args):
     pred= inference(model, newdataloader)
     pred.to_pickle(output_path+'/newdata_pred.pkl')
 
-    # precision, recall, ic, rank_ic = metric_fn(pred)
-    # pprint(('%s: IC %.6f Rank IC %.6f')%(
-    #             name, ic.mean(), rank_ic.mean()))
-    # pprint(name, ': Precision ', precision)
-    # pprint(name, ': Recall ', recall)
     pprint('finished.')
     
 def create_newloader(args):
@@ -185,46 +182,36 @@ def create_newloader(args):
 
     return test_loader
 
-def create_loaders(args,train_start_date):
+def create_loaders(args, train_data, val_data, test_data ):
 
-    Feature = ['OPEN', 'HIGH', 'LOW', 'CLOSE', 'VOL', 'VALUE']
+    Feature = args.features # ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose', 's_dq_volume',] # 's_dq_amount']
     Columns = []
     for f in Feature:
-        for i in range(args.days-1,0,-1):
+        # for i in range(args.days-1,0,-1):
+        for i in range(args.days+1,0,-1):
             Columns.append(f+'_lag_'+str(i))
         Columns.append(f)
-        
-    dev_train_mul = pd.read_csv('dev_train_mul'+str(args.labels)+'_'+str(args.days)+'.csv')
-    # 用于 指数集 的训练
-    # dev_train_mul = dev_train_mul[dev_train_mul['instrument'].isin([1,16,300,812,813,906,922,949,861,859])]
-    # 用于 单个指数 的训练
-    # dev_train_mul = dev_train_mul[dev_train_mul['instrument']==1]
-    
-    train_time = dev_train_mul['datetime'].drop_duplicates().to_list()
-    dev_test_mul = pd.read_csv('dev_test_mul'+str(args.labels)+'_'+str(args.days)+'.csv')
-    dev_train_mul = dev_train_mul.set_index(['datetime', 'instrument']).sort_index(level=['datetime', 'instrument'])
-    dev_test_mul = dev_test_mul.set_index(['datetime', 'instrument']).sort_index(level=['datetime', 'instrument'])
-    
-    dev_train = dev_train_mul.loc[train_time[:int(0.9*len(train_time))]]
-    dev_valid = dev_train_mul.loc[train_time[int(0.9*len(train_time)):]]
-    # df_train, df_valid, df_test = dataset.prepare( ["train", "valid", "test"], col_set=["feature", "label"], data_key=DataHandlerLP.DK_L,)
 
+    dev_train = train_data.set_index(['datetime', 'instrument'])
+    dev_valid = val_data.set_index(['datetime', 'instrument'])
+    dev_test_mul = test_data.set_index(['datetime', 'instrument'])
+    
     start_index = 0
 
     train_loader = DataLoader(dev_train[Columns], dev_train["label"], batch_size=args.batch_size, pin_memory=args.pin_memory, start_index=start_index, device = device)
 
-    start_index += len(dev_test_mul.groupby(level=0).size())
+    start_index += len(dev_train.groupby(level=0,group_keys=False).size())
 
     valid_loader = DataLoader(dev_valid[Columns], dev_valid["label"],  pin_memory=False, start_index=start_index, device = device)
     
-    start_index += len(dev_test_mul.groupby(level=0).size())
+    start_index += len(dev_valid.groupby(level=0,group_keys=False).size())
 
     test_loader = DataLoader(dev_test_mul[Columns], dev_test_mul["label"], pin_memory=False, start_index=start_index, device = device)
 
     return train_loader, valid_loader, test_loader
 
 
-def main(args):
+def main(args, train_data, val_data, test_data ):
     seed = np.random.randint(1000000)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -257,7 +244,7 @@ def main(args):
     test_loaders = []
     for start_date in start_dates:
         pprint('start loading', start_date)
-        train, valid, test = create_loaders(args, start_date)
+        train, valid, test = create_loaders(args, train_data, val_data, test_data )
         pprint(start_date, ' done...in progress...')
         train_loaders.append(train)
         valid_loaders.append(valid)
@@ -288,6 +275,11 @@ def main(args):
             model.to(device)
 
             optimizer = optim.Adam(model.parameters(), lr=args.lr)
+            actor_scheduler = lr_scheduler.MultiStepLR(optimizer, 
+                range(int(args.actor_lr_decay_step), int(args.actor_lr_decay_step) * 1000, int(args.actor_lr_decay_step)), gamma=0.96 )
+            # range(int(args['actor_lr_decay_step']), int(args['actor_lr_decay_step']) * 1000,
+            # int(args['actor_lr_decay_step'])), gamma=float(args['actor_lr_decay_rate']))
+
             best_score = -np.inf
             best_epoch = 0
             stop_round = 0
@@ -297,7 +289,7 @@ def main(args):
                 pprint('Running', times,'Epoch:', epoch)
 
                 pprint('training...')
-                train_epoch(epoch, model, optimizer, train_loader, writer, args)
+                train_epoch(epoch, model, optimizer, actor_scheduler, train_loader, writer, args)
                 # torch.save(model.state_dict(), output_path+'/model.bin.e'+str(epoch))
                 # torch.save(optimizer.state_dict(), output_path+'/optimizer.bin.e'+str(epoch))
 
@@ -343,20 +335,6 @@ def main(args):
                 pred= inference(model, eval(name+'_loader'))
                 pred.to_pickle(output_path+'/pred.pkl.'+name+str(times))
 
-                # precision, recall, ic, rank_ic = metric_fn(pred)
-
-                # pprint(('%s: IC %.6f Rank IC %.6f')%(
-                #             name, ic.mean(), rank_ic.mean()))
-                # pprint(name, ': Precision ', precision)
-                # pprint(name, ': Recall ', recall)
-                # res[name+'-IC'] = ic
-                # res[name+'-RankIC'] = rank_ic
-
-            # all_precision.append(list(precision.values()))
-            # all_recall.append(list(recall.values()))
-            # all_ic.append(ic)
-            # all_rank_ic.append(rank_ic)
-
             pprint('save info...')
             writer.add_hparams(
                 vars(args),
@@ -374,12 +352,6 @@ def main(args):
             default = lambda x: str(x)[:10] if isinstance(x, pd.Timestamp) else x
             with open(output_path+'/info.json', 'w') as f:
                 json.dump(info, f, default=default, indent=4)
-        # pprint(('IC: %.4f (%.4f), Rank IC: %.4f (%.4f)')%(np.array(all_ic).mean(), np.array(all_ic).std(), np.array(all_rank_ic).mean(), np.array(all_rank_ic).std()))
-        # precision_mean = np.array(all_precision).mean(axis= 0)
-        # precision_std = np.array(all_precision).std(axis= 0)
-        # N = [1, 3, 5, 10, 20, 30, 50, 100]
-        # for k in range(len(N)):
-        #     pprint (('Precision@%d: %.4f (%.4f)')%(N[k], precision_mean[k], precision_std[k]))
 
     pprint('finished.')
 
@@ -397,69 +369,150 @@ class ParseConfigFile(argparse.Action):
                 setattr(namespace, key, value)
 
 
-def data_prepare(filepath, mode, args):
+def data_prepare(mode, args):
     # import pandas as pd
-    test = pd.read_csv(filepath, sep = ',')
-
-    stocks = test['STOCK_CODE'].drop_duplicates().to_list()
-    df1 = pd.DataFrame()
-    # 按股票名分别插入对应 NEXT_CLOSE
-    for i in range(len(stocks)):
-        df2 = test[test['STOCK_CODE']==stocks[i]].reset_index(drop=True)
-        # 预测几天标签
-        df2['NEXT_CLOSE'] = df2['CLOSE'][args.labels:].reset_index(drop=True)
-        df1 = pd.concat([df1, df2])
+    test = pd.read_feather(args.filepath)
+    test = test.sort_values(by=['trade_dt', 's_info_windcode'])
         
-    test1 = df1.dropna().reset_index(drop=True).drop('Unnamed: 0',axis=1)
+    test['NEXT_CLOSE'] = test.groupby('s_info_windcode',group_keys=False)['s_dq_adjclose'].shift(-args.labels)
+        
+    test1 = test.dropna().reset_index(drop=True) #.drop('Unnamed: 0',axis=1)
     # .to_csv('test1.csv',index=False)
 
     # 所有特征列，除了'STOCK_CODE'和'END_DATE'
-    feature_columns = ['OPEN', 'HIGH', 'LOW', 'CLOSE','VOL', 'VALUE']
+    feature_columns = args.features # ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose', 's_dq_volume', ] #'s_dq_amount']
 
-    # 创建一个空的DataFrame来存储结果
-    expanded_df = pd.DataFrame()
+    # 定义一个函数，生成过去60天的特征数据
+    def generate_past_60_days_features(group, features, days=args.days):
+        new_columns = []
+        for feature in features:
+            for i in range(1, days + 1):
+                new_columns.append(group[feature].shift(i).rename(f'{feature}_lag_{i}'))
+        # 使用pd.concat(axis=1)一次性连接所有列
+        new_data = pd.concat(new_columns, axis=1)
+        # 将新生成的列添加到原DataFrame中
+        group = pd.concat([group, new_data], axis=1)
+        return group
 
-    # 对每一个股票代码处理
-    for code in test1['STOCK_CODE'].unique():
-        # 选取当前股票代码的数据
-        stock_data = test1[test1['STOCK_CODE'] == code].copy()
+    # 使用group.copy()创建副本，并应用函数
+    df_cleaned = test1.groupby('s_info_windcode',group_keys=False).apply(lambda x: generate_past_60_days_features(x.copy(), features = feature_columns))
 
-        # 对每一个特征列生成过去60天的数据
-        for column in feature_columns:
-            for i in range(1, args.days+1):  # 从1到60天
-                stock_data[f'{column}_lag_{i}'] = stock_data[column].shift(i)
+    # 去除前60天的NaN数据
+    expanded_df = df_cleaned.dropna().reset_index(drop=True)
 
-        # 添加到结果DataFrame
-        expanded_df = pd.concat([expanded_df, stock_data], axis=0)
-
-    # 删除含有NaN的行（因为这些行没有足够的历史数据）
-    expanded_df.dropna(inplace=True)
     # 创建1日标签
-    expanded_df['label'] = expanded_df['NEXT_CLOSE'].div( expanded_df['CLOSE'], axis=0)-1
+    expanded_df['label'] = expanded_df['NEXT_CLOSE'].div( expanded_df['s_dq_adjclose'], axis=0)-1
 
-    Feature = ['OPEN', 'HIGH', 'LOW', 'CLOSE'] # , ['VOL', 'VALUE']
-    Columns_c = ['OPEN', 'HIGH', 'LOW', 'CLOSE'] # 需要除以close的特征
+    Feature = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # , ['VOL', 'VALUE']
+    Columns_c = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # 需要除以close的特征
+    
     for i in range(1,args.days+1):
         for f in Feature:
             Columns_c.append(f+'_lag_'+str(i))
-    expanded_df[Columns_c] = expanded_df[Columns_c].div( expanded_df['CLOSE'], axis=0)-1
+    expanded_df[Columns_c] = expanded_df[Columns_c].div( expanded_df['s_dq_adjclose'], axis=0)-1
 
     # Feature = ['VOL', 'VALUE'] # 需要除以vol和value以归一化的特征
-    Columns_vol = ['VOL']
-    Columns_value = ['VALUE']
+    Columns_vol = ['s_dq_volume']
+    Columns_value = ['s_dq_amount']
     for i in range(1,args.days+1):
-        Columns_vol.append('VOL'+'_lag_'+str(i))
-        Columns_value.append('VALUE'+'_lag_'+str(i))
+        Columns_vol.append('s_dq_volume'+'_lag_'+str(i))
+        Columns_value.append('s_dq_amount'+'_lag_'+str(i))
             
-    expanded_df[Columns_vol] = expanded_df[Columns_vol].div( expanded_df['VOL'], axis=0) -1
-    expanded_df[Columns_value] = expanded_df[Columns_value].div( expanded_df['VALUE'], axis=0) -1
+    expanded_df[Columns_vol] = expanded_df[Columns_vol].div( expanded_df['s_dq_volume'], axis=0) -1
+    expanded_df[Columns_value] = expanded_df[Columns_value].div( expanded_df['s_dq_amount'], axis=0) -1
 
-    dev_test = expanded_df.drop(['PRE_CLOSE','NEXT_CLOSE'],axis=1)
+    dev_test = expanded_df.drop(['NEXT_CLOSE'],axis=1)
+    
+    dev_test = dev_test.dropna().reset_index(drop=True)
+    
     #.to_csv('dev_test.csv', index=False)
-    dev_test  = dev_test.rename(columns={"STOCK_CODE": "instrument", "END_DATE": "datetime"})
-    dev_test = dev_test.set_index(['datetime', 'instrument']).sort_index(level=['datetime', 'instrument'])
+    dev_test  = dev_test.rename(columns={"s_info_windcode": "instrument", "trade_dt": "datetime"})
+    
+    train = dev_test[(dev_test['datetime'] >= args.train_start_date) & (dev_test['datetime'] <= args.train_end_date)]
+    val = dev_test[(dev_test['datetime'] >= args.valid_start_date) & (dev_test['datetime'] <= args.valid_end_date)]
+    test = dev_test[(dev_test['datetime'] >= args.test_start_date) & (dev_test['datetime'] <= args.test_end_date)]
+
+    # dev_test = dev_test.set_index(['datetime', 'instrument']).sort_index(level=['datetime', 'instrument'])
+    
     # dev_test
-    dev_test.to_csv('dev_'+mode+'_mul'+str(args.labels)+'_'+str(args.days)+'.csv')
+    # dev_test.to_csv('dev_'+mode+'_mul'+str(args.labels)+'_'+str(args.days)+'.csv')
+    return train, val, test
+
+def data_prepare2(mode, args):
+    # import pandas as pd
+    test = pd.read_feather(args.filepath)
+    test = test.sort_values(by=['trade_dt', 's_info_windcode'])
+        
+    test['NEXT_CLOSE'] = test.groupby('s_info_windcode',group_keys=False)['s_dq_adjclose'].shift(-args.labels)
+        
+    test1 = test.dropna().reset_index(drop=True) #.drop('Unnamed: 0',axis=1)
+    # .to_csv('test1.csv',index=False)
+
+    # 所有特征列，除了'STOCK_CODE'和'END_DATE'
+    feature_columns = args.features # ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose', 's_dq_volume', ] #'s_dq_amount']
+
+    # 定义一个函数，生成过去60天的特征数据
+    def generate_past_60_days_features(group, features, days=args.days):
+        new_columns = []
+        for feature in features:
+            for i in range(1, days + 2):
+                new_columns.append(group[feature].shift(i).rename(f'{feature}_lag_{i}'))
+        # 使用pd.concat(axis=1)一次性连接所有列
+        new_data = pd.concat(new_columns, axis=1)
+        # 将新生成的列添加到原DataFrame中
+        group = pd.concat([group, new_data], axis=1)
+        return group
+
+    # 使用group.copy()创建副本，并应用函数
+    df_cleaned = test1.groupby('s_info_windcode',group_keys=False).apply(lambda x: generate_past_60_days_features(x.copy(), features = feature_columns))
+
+    # 去除前60天的NaN数据
+    expanded_df = df_cleaned.dropna().reset_index(drop=True)
+
+    # 创建1日标签
+    expanded_df['label'] = expanded_df['NEXT_CLOSE'].div( expanded_df['s_dq_adjclose'], axis=0)-1
+
+    Feature = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # , ['VOL', 'VALUE']
+    Columns_c = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # 需要除以close的特征
+    
+    for f in Feature:
+        expanded_df[f+'_lag_1'] = expanded_df[f+'_lag_1'].div( expanded_df['s_dq_adjclose'], axis=0)-1
+        for i in range(2,args.days+2):
+            expanded_df[f+'_lag_'+str(i)] = expanded_df[f+'_lag_'+str(i)].div( expanded_df[f+'_lag_'+str(i-1)], axis=0)-1
+            # Columns_c.append(f+'_lag_'+str(i))
+    # expanded_df[Columns_c] = expanded_df[Columns_c].div( expanded_df['s_dq_adjclose'], axis=0)-1
+
+    # Feature = ['VOL', 'VALUE'] # 需要除以vol和value以归一化的特征
+    Columns_vol = ['s_dq_volume']
+    Columns_value = ['s_dq_amount']
+    expanded_df['s_dq_volume'+'_lag_1'] = expanded_df['s_dq_volume'+'_lag_1'].div( expanded_df['s_dq_volume'], axis=0)-1
+    expanded_df['s_dq_amount'+'_lag_1'] = expanded_df['s_dq_amount'+'_lag_1'].div( expanded_df['s_dq_amount'], axis=0)-1
+            
+    for i in range(2,args.days+2):
+        expanded_df['s_dq_volume'+'_lag_'+str(i)] = expanded_df['s_dq_volume'+'_lag_'+str(i)].div( expanded_df['s_dq_volume'+'_lag_'+str(i-1)], axis=0) -1
+        expanded_df['s_dq_amount'+'_lag_'+str(i)] = expanded_df['s_dq_amount'+'_lag_'+str(i)].div( expanded_df['s_dq_amount'+'_lag_'+str(i-1)], axis=0) -1
+    #     Columns_vol.append('s_dq_volume'+'_lag_'+str(i))
+    #     Columns_value.append('s_dq_amount'+'_lag_'+str(i))
+            
+    # expanded_df[Columns_vol] = expanded_df[Columns_vol].div( expanded_df['s_dq_volume'], axis=0) -1
+    # expanded_df[Columns_value] = expanded_df[Columns_value].div( expanded_df['s_dq_amount'], axis=0) -1
+
+    dev_test = expanded_df.drop(['NEXT_CLOSE'],axis=1)
+    
+    dev_test = dev_test.dropna().reset_index(drop=True)
+    
+    #.to_csv('dev_test.csv', index=False)
+    dev_test  = dev_test.rename(columns={"s_info_windcode": "instrument", "trade_dt": "datetime"})
+    
+    train = dev_test[(dev_test['datetime'] >= args.train_start_date) & (dev_test['datetime'] <= args.train_end_date)]
+    val = dev_test[(dev_test['datetime'] >= args.valid_start_date) & (dev_test['datetime'] <= args.valid_end_date)]
+    test = dev_test[(dev_test['datetime'] >= args.test_start_date) & (dev_test['datetime'] <= args.test_end_date)]
+
+    # dev_test = dev_test.set_index(['datetime', 'instrument']).sort_index(level=['datetime', 'instrument'])
+    
+    # dev_test
+    # dev_test.to_csv('dev_'+mode+'_mul'+str(args.labels)+'_'+str(args.days)+'.csv')
+    return train, val, test
 
 
 def parse_args():
@@ -468,45 +521,51 @@ def parse_args():
 
     # model
     parser.add_argument('--model_name', default='TRANSFORMER')
-    parser.add_argument('--d_feat', type=int, default=6)
     parser.add_argument('--hidden_size', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=2)
-    parser.add_argument('--dropout', type=float, default=0.1)
+    parser.add_argument('--dropout', type=float, default=0.2)
     # parser.add_argument('--K', type=int, default=1)
-
+    parser.add_argument('--d_feat', type=int, default=6)  # 6
+    parser.add_argument('--features', default= 
+        ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose',
+         's_dq_volume', 's_dq_amount'])  # 6
+    # 
+   
     # training
     parser.add_argument('--n_epochs', type=int, default=150)
     parser.add_argument('--lr', type=float, default=2e-4)
-    parser.add_argument('--early_stop', type=int, default=30)
+    parser.add_argument('--early_stop', type=int, default=15)
     parser.add_argument('--smooth_steps', type=int, default=5)
+    parser.add_argument('--actor_lr_decay_step', type=int, default=50)
+    
     # parser.add_argument('--metric', default='loss')
     parser.add_argument('--loss', default='mse')
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--filepath', type=str, default='./train.csv')
+    parser.add_argument('--filepath', type=str, default='data/ohlcva800.feather')
 
     # data
     parser.add_argument('--data_set', type=str, default='all')
     parser.add_argument('--pin_memory', action='store_false', default=False)
-    parser.add_argument('--batch_size', type=int, default=1000) # -1 indicate daily batch
+    parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
     
     parser.add_argument('--train_start_date', default='2007-01-01') #2009-01-01
-    parser.add_argument('--train_end_date', default='2017-10-30') # 2016-12-31
-    parser.add_argument('--valid_start_date', default='2017-10-31') # 2017-01-01
-    parser.add_argument('--valid_end_date', default='2018-12-31') # 2018-12-31
-    parser.add_argument('--test_start_date', default='2019-01-01') # 2019-01-01
-    parser.add_argument('--test_end_date', default='2022-12-31') # 2022-12-31
+    parser.add_argument('--train_end_date', default='2017-12-31') # 2016-12-31
+    parser.add_argument('--valid_start_date', default='2018-01-01') # 2017-01-01
+    parser.add_argument('--valid_end_date', default='2019-12-31') # 2018-12-31
+    parser.add_argument('--test_start_date', default='2020-01-01') # 2019-01-01
+    parser.add_argument('--test_end_date', default='2024-05-23') # 2022-12-31
     parser.add_argument('--labels', type=int, default=1)
-    parser.add_argument('--days', type=int, default=90) # specify other labels
+    parser.add_argument('--days', type=int, default=60) # specify other labels
 
     # other
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--annot', default='')
     parser.add_argument('--config', action=ParseConfigFile, default='')
-    parser.add_argument('--name', type=str, default='all_transf')
+    parser.add_argument('--name', type=str, default='all_transf07_20')
 
-    parser.add_argument('--outdir', default='./output/all_transf_loss_valid_all_value_label5_day90')
+    parser.add_argument('--outdir', default='./output/all_transf20_label1_daily_mom')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
@@ -517,13 +576,15 @@ def parse_args():
 if __name__ == '__main__':
 
     args = parse_args()
-    
+    pprint('begin...')
     # 数据预处理
-    data_prepare('../train.txt','train',args)
-    data_prepare('../test.txt','test',args)
+    train, val, test = data_prepare2('train',args)
+    # test.to_csv('test.csv')
+    # data_prepare('../test.txt','test',args)
+    pprint('data prepare done...')
 
     if args.mode == 'train':
-        main(args)
+        main(args, train, val ,test)
     elif args.mode == 'test':
         loadandinference(args)
     else:
