@@ -13,7 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 # import qlib
 from torch.utils.tensorboard import SummaryWriter
-# from qlib.contrib.model.pytorch_gru import GRUModel
+from qlib.contrib.model.pytorch_gru import GRUModel
 # from qlib.contrib.model.pytorch_transformer import Transformer
 from pytorch_transformer import Transformer
 from utils import metric_fn, mse
@@ -26,8 +26,8 @@ EPS = 1e-12
 
 def get_model(model_name):
 
-    # if model_name.upper() == 'GRU':
-    #     return GRUModel
+    if model_name.upper() == 'GRU':
+        return GRUModel
     
     if model_name.upper() == 'TRANSFORMER':
         return Transformer
@@ -57,8 +57,8 @@ def average_params(params_list):
 
 
 def loss_fn(pred, label, args):
-    # mask = ~torch.isnan(label)
-    return mse(pred, label) #mse(pred[mask], label[mask])
+    mask = ~torch.isnan(pred)
+    return mse(pred[mask], label[mask]) # mse(pred, label) #
 
 
 global_log_file = None
@@ -275,7 +275,8 @@ def main(args, train_data, val_data, test_data ):
             if args.model_name == 'TRANSFORMER':
                 model = get_model(args.model_name)(args.d_feat, args.hidden_size, args.num_layers, dropout=args.dropout)
             else:
-                model = get_model(args.model_name)()
+                model = get_model(args.model_name)(d_feat = args.d_feat, num_layers = args.num_layers)
+
 
             model.to(device)
 
@@ -527,7 +528,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # model
-    parser.add_argument('--model_name', default='TRANSFORMER')
+    parser.add_argument('--model_name', default='GRU') # GRU TRANSFORMER
     parser.add_argument('--hidden_size', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=2)
     parser.add_argument('--dropout', type=float, default=0.2)
@@ -554,7 +555,7 @@ def parse_args():
     # data
     parser.add_argument('--data_set', type=str, default='all')
     parser.add_argument('--pin_memory', action='store_false', default=False)
-    parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
+    parser.add_argument('--batch_size', type=int, default=1000) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
     
     parser.add_argument('--train_start_date', default='2017-01-01') #2009-01-01
@@ -572,7 +573,7 @@ def parse_args():
     parser.add_argument('--config', action=ParseConfigFile, default='')
     parser.add_argument('--name', type=str, default='all_transf') # 07_20
 
-    parser.add_argument('--outdir', default='./output/all_transf20_label1_daily_mom')
+    parser.add_argument('--outdir', default='./output/all_GRU17_label1_mom')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
