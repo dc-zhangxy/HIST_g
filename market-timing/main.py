@@ -482,7 +482,7 @@ def data_prepare2(mode, args):
     
     for f in Feature:
         for i in range(args.days+1,1,-1): #(2,args.days+2):
-            expanded_df[f+'_lag_'+str(i)] = expanded_df[f+'_lag_'+str(i)].div( expanded_df[f+'_lag_'+str(i-1)], axis=0)-1
+            expanded_df[f+'_lag_'+str(i)] = expanded_df[f+'_lag_'+str(i)].div( expanded_df['s_dq_adjclose'+'_lag_'+str(i-1)], axis=0)-1
         expanded_df[f+'_lag_1'] = expanded_df[f+'_lag_1'].div( expanded_df['s_dq_adjclose'], axis=0)-1
         
             # Columns_c.append(f+'_lag_'+str(i))
