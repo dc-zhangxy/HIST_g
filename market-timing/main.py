@@ -186,11 +186,16 @@ def create_loaders(args, train_data, val_data, test_data ):
 
     Feature = args.features # ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose', 's_dq_volume',] # 's_dq_amount']
     Columns = []
+    # 新方法：除以前一天close
     for f in Feature:
-        # for i in range(args.days-1,0,-1):
         for i in range(args.days+1,0,-1):
             Columns.append(f+'_lag_'+str(i))
-        Columns.append(f)
+        
+    # 原始方法：除以当天close
+    # for f in Feature:
+    #     for i in range(args.days-1,0,-1):
+    #         Columns.append(f+'_lag_'+str(i))
+    #     Columns.append(f)
 
     dev_train = train_data.set_index(['datetime', 'instrument'])
     dev_valid = val_data.set_index(['datetime', 'instrument'])
@@ -473,24 +478,26 @@ def data_prepare2(mode, args):
     expanded_df['label'] = expanded_df['NEXT_CLOSE'].div( expanded_df['s_dq_adjclose'], axis=0)-1
 
     Feature = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # , ['VOL', 'VALUE']
-    Columns_c = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # 需要除以close的特征
+    # Columns_c = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # 需要除以close的特征
     
     for f in Feature:
-        expanded_df[f+'_lag_1'] = expanded_df[f+'_lag_1'].div( expanded_df['s_dq_adjclose'], axis=0)-1
-        for i in range(2,args.days+2):
+        for i in range(args.days+1,1,-1): #(2,args.days+2):
             expanded_df[f+'_lag_'+str(i)] = expanded_df[f+'_lag_'+str(i)].div( expanded_df[f+'_lag_'+str(i-1)], axis=0)-1
+        expanded_df[f+'_lag_1'] = expanded_df[f+'_lag_1'].div( expanded_df['s_dq_adjclose'], axis=0)-1
+        
             # Columns_c.append(f+'_lag_'+str(i))
     # expanded_df[Columns_c] = expanded_df[Columns_c].div( expanded_df['s_dq_adjclose'], axis=0)-1
 
     # Feature = ['VOL', 'VALUE'] # 需要除以vol和value以归一化的特征
-    Columns_vol = ['s_dq_volume']
-    Columns_value = ['s_dq_amount']
-    expanded_df['s_dq_volume'+'_lag_1'] = expanded_df['s_dq_volume'+'_lag_1'].div( expanded_df['s_dq_volume'], axis=0)-1
-    expanded_df['s_dq_amount'+'_lag_1'] = expanded_df['s_dq_amount'+'_lag_1'].div( expanded_df['s_dq_amount'], axis=0)-1
-            
-    for i in range(2,args.days+2):
+    # Columns_vol = ['s_dq_volume']
+    # Columns_value = ['s_dq_amount']
+     
+    for i in range(args.days+1,1,-1): #(2,args.days+2):
         expanded_df['s_dq_volume'+'_lag_'+str(i)] = expanded_df['s_dq_volume'+'_lag_'+str(i)].div( expanded_df['s_dq_volume'+'_lag_'+str(i-1)], axis=0) -1
         expanded_df['s_dq_amount'+'_lag_'+str(i)] = expanded_df['s_dq_amount'+'_lag_'+str(i)].div( expanded_df['s_dq_amount'+'_lag_'+str(i-1)], axis=0) -1
+    expanded_df['s_dq_volume'+'_lag_1'] = expanded_df['s_dq_volume'+'_lag_1'].div( expanded_df['s_dq_volume'], axis=0)-1
+    expanded_df['s_dq_amount'+'_lag_1'] = expanded_df['s_dq_amount'+'_lag_1'].div( expanded_df['s_dq_amount'], axis=0)-1
+           
     #     Columns_vol.append('s_dq_volume'+'_lag_'+str(i))
     #     Columns_value.append('s_dq_amount'+'_lag_'+str(i))
             
@@ -550,20 +557,20 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
     
-    parser.add_argument('--train_start_date', default='2007-01-01') #2009-01-01
+    parser.add_argument('--train_start_date', default='2017-01-01') #2009-01-01
     parser.add_argument('--train_end_date', default='2017-12-31') # 2016-12-31
     parser.add_argument('--valid_start_date', default='2018-01-01') # 2017-01-01
     parser.add_argument('--valid_end_date', default='2019-12-31') # 2018-12-31
     parser.add_argument('--test_start_date', default='2020-01-01') # 2019-01-01
     parser.add_argument('--test_end_date', default='2024-05-23') # 2022-12-31
     parser.add_argument('--labels', type=int, default=1)
-    parser.add_argument('--days', type=int, default=60) # specify other labels
+    parser.add_argument('--days', type=int, default=10) # specify other labels
 
     # other
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--annot', default='')
     parser.add_argument('--config', action=ParseConfigFile, default='')
-    parser.add_argument('--name', type=str, default='all_transf07_20')
+    parser.add_argument('--name', type=str, default='all_transf') # 07_20
 
     parser.add_argument('--outdir', default='./output/all_transf20_label1_daily_mom')
     parser.add_argument('--overwrite', action='store_true', default=False)
