@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.optim import lr_scheduler
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 import os
 import copy
 import json
@@ -54,11 +55,14 @@ def average_params(params_list):
                 new_params[k] += v / n
     return new_params
 
-
-
+crossentropyloss = nn.CrossEntropyLoss()
 def loss_fn(pred, label, args):
     mask = ~torch.isnan(pred)
-    return mse(pred[mask], label[mask]) # mse(pred, label) #
+    return mse(pred[mask], label[mask])
+    # return crossentropyloss(pred[mask], label[mask])
+    # return crossentropyloss(torch.unsqueeze(pred[mask],0), 
+    #                         torch.unsqueeze(label[mask],0)
+    #                         ) 
 
 
 global_log_file = None
@@ -92,7 +96,7 @@ def train_epoch(epoch, model, optimizer, scheduler, train_loader, writer, args):
         loss.backward()
         torch.nn.utils.clip_grad_value_(model.parameters(), 3.)
         optimizer.step()
-        scheduler.step()
+        # scheduler.step()
 
 
 def test_epoch(epoch, model, test_loader, writer, args, prefix='Test'):
@@ -277,17 +281,21 @@ def main(args, train_data, val_data, test_data ):
             else:
                 model = get_model(args.model_name)(d_feat = args.d_feat, num_layers = args.num_layers)
 
-
             model.to(device)
 
             optimizer = optim.Adam(model.parameters(), lr=args.lr)
-            actor_scheduler = lr_scheduler.MultiStepLR(optimizer, 
-                range(int(args.actor_lr_decay_step), int(args.actor_lr_decay_step) * 1000, int(args.actor_lr_decay_step)), gamma=0.96 )
+            actor_scheduler = None
+            # lr_scheduler.MultiStepLR(optimizer, 
+            #     range(int(args.actor_lr_decay_step), int(args.actor_lr_decay_step) * 1000, int(args.actor_lr_decay_step)), gamma=0.96 )
+            # 定义学习率调度器
+            Re_scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
+
             # range(int(args['actor_lr_decay_step']), int(args['actor_lr_decay_step']) * 1000,
             # int(args['actor_lr_decay_step'])), gamma=float(args['actor_lr_decay_rate']))
 
             best_score = -np.inf
             best_epoch = 0
+            # epochs_no_improve = 0
             stop_round = 0
             best_param = copy.deepcopy(model.state_dict())
             params_list = collections.deque(maxlen=args.smooth_steps)
@@ -318,37 +326,55 @@ def main(args, train_data, val_data, test_data ):
                 pprint('train_score %.6f, valid_score %.6f, test_score %.6f'%(train_score, val_score, test_score))
 
                 model.load_state_dict(params_ckpt)
+                
+                # 使用调度器调整学习率
+                Re_scheduler.step(val_loss)
+                # actor_scheduler.step()
 
                 if val_score > best_score:
                     best_score = val_score
                     stop_round = 0
+                    # epochs_no_improve = 0
                     best_epoch = epoch
                     best_param = copy.deepcopy(avg_params)
                 else:
                     stop_round += 1
+                    # epochs_no_improve += 1
+                    # 当首次验证损失未改善时保存最佳模型
+                    if stop_round == 1:
+                        model.load_state_dict(best_param)
+                        torch.save(best_param, output_path+'/model.bin.e'+str(best_epoch))
+
+                        pprint('inference...')
+                        res = dict()
+                        for name in ['test']:
+                            pred= inference(model, eval(name+'_loader'))
+                            pred.to_pickle(output_path+'/pred.pkl.'+name+str(times)+str(best_epoch))
+                        
                     if stop_round >= args.early_stop:
                         pprint('early stop')
                         break
                 pprint('Best epoch: ', best_epoch)
+                
             pprint('best score:', best_score, '@', best_epoch)
+            
             model.load_state_dict(best_param)
             torch.save(best_param, output_path+'/model.bin')
 
             pprint('inference...')
             res = dict()
             for name in ['test']:
-
                 pred= inference(model, eval(name+'_loader'))
                 pred.to_pickle(output_path+'/pred.pkl.'+name+str(times))
 
             pprint('save info...')
-            writer.add_hparams(
-                vars(args),
-                {
-                    'hparam/'+key: value
-                    for key, value in res.items()
-                }
-            )
+            # writer.add_hparams(
+            #     vars(args),
+            #     {
+            #         'hparam/'+key: value
+            #         for key, value in res.items()
+            #     }
+            # )
 
             info = dict(
                 config=vars(args),
@@ -377,10 +403,10 @@ class ParseConfigFile(argparse.Action):
 
 def data_prepare(mode, args):
     # import pandas as pd
-    test = pd.read_feather(args.filepath)
-    test = test.sort_values(by=['trade_dt', 's_info_windcode'])
+    test = pd.read_csv(args.filepath, index_col=0)
+    test = test.sort_values(by=['END_DATE', 'STOCK_CODE'])
         
-    test['NEXT_CLOSE'] = test.groupby('s_info_windcode',group_keys=False)['s_dq_adjclose'].shift(-args.labels)
+    test['NEXT_CLOSE'] = test.groupby('STOCK_CODE',group_keys=False)['CLOSE'].shift(-args.labels)
         
     test1 = test.dropna().reset_index(drop=True) #.drop('Unnamed: 0',axis=1)
     # .to_csv('test1.csv',index=False)
@@ -389,6 +415,7 @@ def data_prepare(mode, args):
     feature_columns = args.features # ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose', 's_dq_volume', ] #'s_dq_amount']
 
     # 定义一个函数，生成过去60天的特征数据
+    # 我这里是直接shift的，所以对于前800数量有变化的股票就会有时间断层，需要保留当前时间点前60天的数据才行
     def generate_past_60_days_features(group, features, days=args.days):
         new_columns = []
         for feature in features:
@@ -401,38 +428,39 @@ def data_prepare(mode, args):
         return group
 
     # 使用group.copy()创建副本，并应用函数
-    df_cleaned = test1.groupby('s_info_windcode',group_keys=False).apply(lambda x: generate_past_60_days_features(x.copy(), features = feature_columns))
+    df_cleaned = test1.groupby('STOCK_CODE',group_keys=False).apply(lambda x: generate_past_60_days_features(x.copy(), features = feature_columns))
 
     # 去除前60天的NaN数据
     expanded_df = df_cleaned.dropna().reset_index(drop=True)
 
     # 创建1日标签
-    expanded_df['label'] = expanded_df['NEXT_CLOSE'].div( expanded_df['s_dq_adjclose'], axis=0)-1
+    expanded_df['label'] = expanded_df['NEXT_CLOSE'].div( expanded_df['CLOSE'], axis=0)-1
 
-    Feature = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # , ['VOL', 'VALUE']
-    Columns_c = ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose'] # 需要除以close的特征
+    # 标准化特征
+    Feature = ['OPEN', 'HIGH', 'LOW', 'CLOSE',] # , ['VOL', 'VALUE']
+    Columns_c = ['OPEN', 'HIGH', 'LOW', 'CLOSE',]  # 需要除以close的特征
     
     for i in range(1,args.days+1):
         for f in Feature:
             Columns_c.append(f+'_lag_'+str(i))
-    expanded_df[Columns_c] = expanded_df[Columns_c].div( expanded_df['s_dq_adjclose'], axis=0)-1
+    expanded_df[Columns_c] = expanded_df[Columns_c].div( expanded_df['CLOSE'], axis=0)-1
 
     # Feature = ['VOL', 'VALUE'] # 需要除以vol和value以归一化的特征
-    Columns_vol = ['s_dq_volume']
-    Columns_value = ['s_dq_amount']
+    Columns_vol = ['VOL' ]
+    Columns_value = ['VALUE']
     for i in range(1,args.days+1):
-        Columns_vol.append('s_dq_volume'+'_lag_'+str(i))
-        Columns_value.append('s_dq_amount'+'_lag_'+str(i))
+        Columns_vol.append('VOL'+'_lag_'+str(i))
+        Columns_value.append('VALUE'+'_lag_'+str(i))
             
-    expanded_df[Columns_vol] = expanded_df[Columns_vol].div( expanded_df['s_dq_volume'], axis=0) -1
-    expanded_df[Columns_value] = expanded_df[Columns_value].div( expanded_df['s_dq_amount'], axis=0) -1
+    expanded_df[Columns_vol] = expanded_df[Columns_vol].div( expanded_df['VOL'], axis=0) -1
+    expanded_df[Columns_value] = expanded_df[Columns_value].div( expanded_df['VALUE'], axis=0) -1
 
     dev_test = expanded_df.drop(['NEXT_CLOSE'],axis=1)
     
     dev_test = dev_test.dropna().reset_index(drop=True)
     
     #.to_csv('dev_test.csv', index=False)
-    dev_test  = dev_test.rename(columns={"s_info_windcode": "instrument", "trade_dt": "datetime"})
+    dev_test  = dev_test.rename(columns={"STOCK_CODE": "instrument", "END_DATE": "datetime"})
     
     train = dev_test[(dev_test['datetime'] >= args.train_start_date) & (dev_test['datetime'] <= args.train_end_date)]
     val = dev_test[(dev_test['datetime'] >= args.valid_start_date) & (dev_test['datetime'] <= args.valid_end_date)]
@@ -458,6 +486,7 @@ def data_prepare2(mode, args):
     feature_columns = args.features # ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose', 's_dq_volume', ] #'s_dq_amount']
 
     # 定义一个函数，生成过去60天的特征数据
+    # 我这里是直接shift的，所以对于前800数量有变化的股票就会有时间断层，需要保留当前时间点前60天的数据才行
     def generate_past_60_days_features(group, features, days=args.days):
         new_columns = []
         for feature in features:
@@ -528,16 +557,14 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # model
-    parser.add_argument('--model_name', default='GRU') # GRU TRANSFORMER
+    parser.add_argument('--model_name', default='TRANSFORMER') # GRU TRANSFORMER
     parser.add_argument('--hidden_size', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=2)
-    parser.add_argument('--dropout', type=float, default=0.2)
+    parser.add_argument('--dropout', type=float, default=0.1)
     # parser.add_argument('--K', type=int, default=1)
     parser.add_argument('--d_feat', type=int, default=6)  # 6
     parser.add_argument('--features', default= 
-        ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose',
-         's_dq_volume', 's_dq_amount'])  # 6
-    # 
+        ['OPEN', 'HIGH', 'LOW', 'CLOSE','VOL', 'VALUE'])  # 6
    
     # training
     parser.add_argument('--n_epochs', type=int, default=150)
@@ -547,10 +574,10 @@ def parse_args():
     parser.add_argument('--actor_lr_decay_step', type=int, default=50)
     
     # parser.add_argument('--metric', default='loss')
-    parser.add_argument('--loss', default='mse')
+    parser.add_argument('--loss', default='mse') # mse CE
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--filepath', type=str, default='data/ohlcva800.feather')
+    parser.add_argument('--filepath', type=str, default='data/hq_index.csv')
 
     # data
     parser.add_argument('--data_set', type=str, default='all')
@@ -558,14 +585,14 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=1000) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
     
-    parser.add_argument('--train_start_date', default='2017-01-01') #2009-01-01
+    parser.add_argument('--train_start_date', default='1990-12-19') #2009-01-01
     parser.add_argument('--train_end_date', default='2017-12-31') # 2016-12-31
     parser.add_argument('--valid_start_date', default='2018-01-01') # 2017-01-01
     parser.add_argument('--valid_end_date', default='2019-12-31') # 2018-12-31
     parser.add_argument('--test_start_date', default='2020-01-01') # 2019-01-01
-    parser.add_argument('--test_end_date', default='2024-05-23') # 2022-12-31
-    parser.add_argument('--labels', type=int, default=1)
-    parser.add_argument('--days', type=int, default=10) # specify other labels
+    parser.add_argument('--test_end_date', default='2024-06-18') # 2022-12-31
+    parser.add_argument('--labels', type=int, default=5)
+    parser.add_argument('--days', type=int, default=30) # specify other labels
 
     # other
     parser.add_argument('--seed', type=int, default=0)
@@ -573,7 +600,7 @@ def parse_args():
     parser.add_argument('--config', action=ParseConfigFile, default='')
     parser.add_argument('--name', type=str, default='all_transf') # 07_20
 
-    parser.add_argument('--outdir', default='./output/all_GRU17_label1')
+    parser.add_argument('--outdir', default='./output/hq_transf_label5_sche_mse_v2')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
@@ -587,7 +614,7 @@ if __name__ == '__main__':
     pprint('begin...')
     # 数据预处理
     train, val, test = data_prepare('train',args)
-    # test.to_csv('test.csv')
+    # val.to_csv('val.csv', index=False)
     # data_prepare('../test.txt','test',args)
     pprint('data prepare done...')
 
