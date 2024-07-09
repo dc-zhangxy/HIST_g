@@ -36,7 +36,7 @@ class HQindexEnv:
         # self.shuffle_k = torch.tensor(range(self.horizon))
 #         self.character_v = torch.Tensor(character_vector)
         self.tc = 5e-4
-        self.xt = 0
+        self.xt = 0 #torch.tensor([[0]], dtype=torch.float32)
         # self.utility_n = np.zeros(self.n_product)
         # self.theta_vec = theta_vec
         # self.theta_x = np.zeros([self.n_product, self.n_product])
@@ -45,28 +45,39 @@ class HQindexEnv:
         self.done = False
 
     def step(self, input_action, label):
+        label = label.numpy()
         # action \in [-1,1]
-        if  self.xt == 0 and input_action > 0:
+        if  self.xt >= 0 and input_action >= self.xt:
             # buy
-            reward = input_action*((1-self.tc)*label - self.tc)
-            self.xt = 1
+            need_buy = input_action - self.xt 
+            reward = need_buy*((1-self.tc)*label - self.tc) + self.xt *label 
             
-        elif self.xt == 0 and input_action < 0:
+        elif self.xt >= 0 and input_action >= 0 and input_action < self.xt:
             # short , sell or no act
-            reward = input_action*label
+            reward = (input_action)*label + \
+                    (self.xt - input_action)*(-(1-self.tc)*label + self.tc)
+                    
+        elif self.xt >= 0 and input_action < 0 :
+            reward = (input_action-self.xt)*((1-self.tc)*label - self.tc) 
             
-        elif self.xt == 1 and input_action < 0:
+        elif self.xt <0 and input_action <= self.xt:
             # sell 
-            reward = -input_action*(-(1-self.tc)*label - self.tc)
-            self.xt = 0
+            need_short = input_action - self.xt 
+            reward = need_short*((1-self.tc)*label - self.tc) + self.xt *label 
             
-        elif self.xt == 1 and input_action > 0:
+        elif self.xt <0 and input_action < 0 and input_action > self.xt :
             # long hold , buy or no act
-            reward = input_action*label
+            reward = input_action*label + \
+                (self.xt - input_action)*(-(1-self.tc)*label + self.tc)
+            
+        elif self.xt <0 and input_action >= 0 :
+            reward = (input_action - self.xt)*((1-self.tc)*label - self.tc)
             
         # 状态为 过去n日量价 和 当前持仓
+        # print(label, input_action)
+        self.xt = input_action
         
-        return torch.tensor([[self.xt]]), reward #, self.done, .to(self.device)
+        return torch.tensor(self.xt, dtype=torch.float32), reward #, self.done, .to(self.device)
             
     def _step(self, input_action, label):
         # 0,1  分别代表 short, long 即 -1,1
@@ -124,9 +135,9 @@ class HQindexEnv:
         # self.steps = 0
         # self.inventory = self.inventory_ori.clone()
 
-        self.xt = 0
+        self.xt = 0 
 
-        return torch.tensor([[self.xt]]) #.to(self.device)
+        return torch.tensor([[self.xt]], dtype=torch.float32) #.to(self.device)
     # def fun_demand(self, bundle, discount, e):
         
     #     return purchase_bundle, torch.tensor(purchase_list)

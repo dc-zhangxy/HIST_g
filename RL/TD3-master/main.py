@@ -15,7 +15,7 @@ from env_hq import HQindexEnv
 # A fixed seed is used for the eval environment
 def eval_policy(policy, env_name, seed, eval_episodes=10):
 	# eval_env = gym.make(env_name)
-    eval_env = HQindexEnv(state_dim, action_dim,device)
+	eval_env = HQindexEnv(state_dim, action_dim,device)
 	# eval_env.seed(seed + 100)
 
 	avg_reward = 0.
@@ -65,10 +65,10 @@ if __name__ == "__main__":
 	if args.save_model and not os.path.exists("./models"):
 		os.makedirs("./models")
 
-    state_dim = args.days * args.d_feat +1
-    action_dim = args.action_size  # 连续动作，action在-1-1之前，作为权重
+	state_dim = args.days * args.d_feat +1
+	action_dim = args.action_size  # 连续动作，action在-1-1之前，作为权重
 	# env = gym.make(args.env)
-    env = HQindexEnv(state_dim, action_dim,device)
+	env = HQindexEnv(state_dim, action_dim,device)
 
 	# Set seeds
 	# env.seed(args.seed)

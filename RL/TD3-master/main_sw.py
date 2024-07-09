@@ -114,7 +114,7 @@ def train_epoch(epoch, optimizer, agent, env, train_loader, train_data_dt_st, wr
                 # Select action randomly or according to policy
                 if epoch < args.start_timesteps:
                     # print('random action')
-                    action = torch.rand(1,1)*2*args.max_action - args.max_action  #torch.tensor([random.uniform(-args.max_action, args.max_action)])
+                    action = torch.rand(1)*2*args.max_action - args.max_action  #torch.tensor([random.uniform(-args.max_action, args.max_action)])
                 else:
                     action = (
                         agent.get_action(state)  #(np.array(state))
@@ -173,7 +173,7 @@ def test_epoch(epoch, agent, env, test_loader, train_data_dt_st, writer, args, p
                     action = agent.get_action(state)
                     xt, reward = env.step(action, label)
                     revenue += reward
-                preds_df = pd.DataFrame({ 'action': action.flatten()[0], 'label': label.cpu().detach().numpy(), 'datetime': st_date ,'instrument':st})
+                preds_df = pd.DataFrame({ 'action': action.numpy().flatten()[0], 'label': label.cpu().detach().numpy(), 'datetime': st_date ,'instrument':st})
                 # print(preds_df)
                 preds.append(preds_df.set_index(['datetime','instrument'],drop=True))
         revenue_sum += revenue
@@ -217,7 +217,7 @@ def inference(agent, env, data_loader, train_data_dt_st):
                 # preds.append(action)
                 # pred = model(feature) # action.cpu().detach().numpy()
                 # preds.append(pd.DataFrame({ 'action': action, 'label': label.cpu().numpy(),  }, index=index))
-                preds_df = pd.DataFrame({ 'action': action.flatten()[0], 'label': label.cpu().detach().numpy(), 'datetime': st_date ,'instrument':st})
+                preds_df = pd.DataFrame({ 'action': action.numpy().flatten()[0], 'label': label.cpu().detach().numpy(), 'datetime': st_date ,'instrument':st})
                 preds.append(preds_df.set_index(['datetime','instrument'],drop=True))
         revenue_sum += revenue
     preds = pd.concat(preds, axis=0)
@@ -517,9 +517,13 @@ class ParseConfigFile(argparse.Action):
 
 def data_prepare(mode, args):
     # import pandas as pd
-    test = pd.read_csv(args.filepath, index_col=0)
+    test = pd.read_excel(args.filepath)
+    test  = test.rename(columns={"代码": "STOCK_CODE", "时间": "END_DATE", '开盘价(元)':'OPEN', 
+        '最高价(元)':'HIGH', '收盘价(元)':'CLOSE', '最低价(元)':'LOW', '成交量(万股)':'VOL',
+       '成交金额(万元)':'VALUE'})
+    
     test['END_DATE'] = pd.to_datetime(test['END_DATE'])
-    test = test[test['STOCK_CODE'] =='000905'].reset_index(drop=True )
+    # test = test[test['STOCK_CODE'] =='000300'].reset_index(drop=True )
     # test = test[test['STOCK_CODE'].isin(['000852','000905','000300','000001'])].reset_index(drop=True )
     # 如果要跑全市场的，
 
@@ -632,7 +636,7 @@ def parse_args():
     parser.add_argument('--loss', default='mse') # mse CE
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--filepath', type=str, default='../data/hq_index.csv') #'../data/hq_index.csv'
+    parser.add_argument('--filepath', type=str, default='../data/申万板块行情序列.xlsx') #'../data/hq_index.csv'
     # /home/aiuser/work/HIST_all/RL/data/hq_index.csv
     # /home/aiuser/work/HIST_all/RL/
 
@@ -642,12 +646,12 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
     
-    parser.add_argument('--train_start_date', default='2005-01-01') #1990-12-19
-    parser.add_argument('--train_end_date', default='2016-12-31') # 2017-12-31
-    parser.add_argument('--valid_start_date', default='2017-01-01') # 2018-01-01
+    parser.add_argument('--train_start_date', default='1990-12-19') #1990-12-19
+    parser.add_argument('--train_end_date', default='2017-12-31') # 2017-12-31
+    parser.add_argument('--valid_start_date', default='2018-01-01') # 2018-01-01
     parser.add_argument('--valid_end_date', default='2018-12-31') # 2019-12-31
     parser.add_argument('--test_start_date', default='2019-01-01') # 2020-01-01
-    parser.add_argument('--test_end_date', default='2024-06-18') # 2024-06-18
+    parser.add_argument('--test_end_date', default='2024-07-18') # 2024-06-18
     parser.add_argument('--labels', type=int, default=2)
     parser.add_argument('--NEXT_CLOSE', type=int, default=1)
     parser.add_argument('--days', type=int, default=30) # 30 60 
@@ -657,7 +661,7 @@ def parse_args():
     parser.add_argument('--config', action=ParseConfigFile, default='')
     parser.add_argument('--name', type=str, default='all_transf') # 07_20
 
-    parser.add_argument('--outdir', default='./output/hq905_TD3_gru_label2to1_rew')
+    parser.add_argument('--outdir', default='./output/hq6_TD3_gru_label2to1_tc_sm')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
