@@ -210,7 +210,8 @@ class TD3(object):
 
 
 	def get_action(self, state):
-		state = torch.tensor(state.reshape(1, -1).clone().detach(), dtype=torch.float32, device=device) # 
+		state = state.reshape(1, -1).to(dtype=torch.float32, device=device)
+		# state = torch.tensor(state.reshape(1, -1).clone().detach(), dtype=torch.float32, device=device) # 
 		# state = self.GRUmodel(state)
 		return self.actor(state).cpu().data.numpy() #.flatten()
 
