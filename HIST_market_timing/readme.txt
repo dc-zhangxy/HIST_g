@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=3 nohup python learn_label_hgat.py >> dqmv800.out &

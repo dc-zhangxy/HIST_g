@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=2 nohup python main.py >> transfall.out &
