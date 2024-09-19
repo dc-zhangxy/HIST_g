@@ -45,33 +45,3 @@ def metric_fn(preds):
     rank_ic = preds.groupby(level='datetime').apply(lambda x: x.label.corr(x.score, method='spearman')).mean()
 
     return precision, recall, ic, rank_ic
-
-def ic_metric(pred, label, weight=None):
-    EPS = 1e-9
-    # pred
-    if pred.dim() == 1:
-        pred = pred.view(-1,1)
-    # label = label.to(torch.float32)
-    # label
-    if label.dim() == 1:
-        label = label.view(-1,1)
-
-    # 权重, 默认等权
-    if weight is None:
-        weight = torch.ones_like(label)
-
-    # 加权IC
-    weight = weight/weight.sum()
-    
-    label -= label.t().mm(weight)
-    label /= (label.mul(label).t().mm(weight)+EPS).sqrt()
-    
-    pred = pred - pred.t().mm(weight)
-    pred = pred / (pred.mul(pred).t().mm(weight)+EPS).sqrt()
-    
-    ic = pred.mul(label).t().mm(weight).squeeze()
-
-    return ic
-
-def ic_loss(pred, label, weight=None):
-    return - ic_metric(pred, label, weight)

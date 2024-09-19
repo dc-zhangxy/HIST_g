@@ -204,7 +204,7 @@ def create_loaders(args, train_data, val_data, test_data ):
 
 
 def main(args, train_data, val_data, test_data ):
-    seed = np.random.randint(1000000)
+    seed = args.seed # np.random.randint(1000000)
     np.random.seed(seed)
     torch.manual_seed(seed)
     suffix = "%s_dh%s_dn%s_drop%s_lr%s_bs%s_seed%s%s"%(

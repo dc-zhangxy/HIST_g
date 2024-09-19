@@ -1,10 +1,19 @@
+import numpy as np
 import torch
 import pandas as pd
-import numpy as np
 
 def mse(pred, label):
     loss = (pred - label)**2
     return torch.mean(loss)
+
+def cross_entropy_error(pred,label):
+    delta=1e-9  #添加一个微小值可以防止负无限大(np.log(0))的发生。
+    return -torch.sum(label*torch.log(pred+delta))
+
+def bce_loss(y_pred, y):
+    # 需保证 y_pred 和y 都在0-1之间，以0.5为分界点
+    # 如 y_pred = torch.sigmoid(y_pred)
+ return -torch.log(y_pred)*y -torch.log(1-y_pred)*(1-y)
 
 def mae(pred, label):
     loss = (pred - label).abs()
@@ -46,32 +55,40 @@ def metric_fn(preds):
 
     return precision, recall, ic, rank_ic
 
-def ic_metric(pred, label, weight=None):
-    EPS = 1e-9
-    # pred
-    if pred.dim() == 1:
-        pred = pred.view(-1,1)
-    # label = label.to(torch.float32)
-    # label
-    if label.dim() == 1:
-        label = label.view(-1,1)
 
-    # 权重, 默认等权
-    if weight is None:
-        weight = torch.ones_like(label)
+class ReplayBuffer(object):
+    def __init__(self, state_dim, action_dim, max_size=int(1e6)):
+        self.max_size = max_size
+        self.ptr = 0
+        self.size = 0
 
-    # 加权IC
-    weight = weight/weight.sum()
-    
-    label -= label.t().mm(weight)
-    label /= (label.mul(label).t().mm(weight)+EPS).sqrt()
-    
-    pred = pred - pred.t().mm(weight)
-    pred = pred / (pred.mul(pred).t().mm(weight)+EPS).sqrt()
-    
-    ic = pred.mul(label).t().mm(weight).squeeze()
+        self.state = np.zeros((max_size, state_dim))
+        self.action = np.zeros((max_size, action_dim))
+        self.next_state = np.zeros((max_size, state_dim))
+        self.reward = np.zeros((max_size, 1))
+        self.not_done = np.zeros((max_size, 1))
 
-    return ic
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def ic_loss(pred, label, weight=None):
-    return - ic_metric(pred, label, weight)
+
+    def add(self, state, action, next_state, reward, done):
+        self.state[self.ptr] = state
+        self.action[self.ptr] = action
+        self.next_state[self.ptr] = next_state
+        self.reward[self.ptr] = reward
+        self.not_done[self.ptr] = 1. - done
+
+        self.ptr = (self.ptr + 1) % self.max_size
+        self.size = min(self.size + 1, self.max_size)
+
+
+    def sample(self, batch_size):
+        ind = np.random.randint(0, self.size, size=batch_size)
+
+        return (
+            torch.FloatTensor(self.state[ind]).to(self.device),
+            torch.FloatTensor(self.action[ind]).to(self.device),
+            torch.FloatTensor(self.next_state[ind]).to(self.device),
+            torch.FloatTensor(self.reward[ind]).to(self.device),
+            torch.FloatTensor(self.not_done[ind]).to(self.device)
+        )

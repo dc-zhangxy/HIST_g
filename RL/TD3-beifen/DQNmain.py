@@ -15,10 +15,12 @@ from tqdm import tqdm
 # import qlib
 from torch.utils.tensorboard import SummaryWriter
 from qlib.contrib.model.pytorch_gru import GRUModel
-# from qlib.contrib.model.pytorch_transformer import Transformer
-from pytorch_transformer import Transformer
+from qlib.contrib.model.pytorch_transformer import Transformer
+# from pytorch_transformer import Transformer
 from utils import metric_fn, mse
 from dataloader import DataLoader
+from env_hq import HQindex
+from DQN_rec import DQNAgent 
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -78,61 +80,109 @@ def pprint(*args):
         print(time, *args, flush=True, file=f)
 
 
-global_step = -1
-def train_epoch(epoch, model, optimizer, scheduler, train_loader, writer, args):
-    global global_step
-    model.train()
-    for i, slc in tqdm(train_loader.iter_batch(), total=train_loader.batch_length):
-        global_step += 1
-        feature, label, index = train_loader.get(slc)
+# global_step = -1
+def train_epoch(epoch, optimizer, agent, env, train_loader, train_data_dt_st, writer, args):
+    # print(epoch)
+    done = False
+    revenue_sum = 0
+    xt = env.reset(epoch)
+    # agent.train()
+    for st in train_data_dt_st['instrument'].drop_duplicates():
+        revenue = 0
+        train_data_st = train_data_dt_st[train_data_dt_st['instrument']==st].reset_index(drop=True)
+        train_data_st_y = train_data_st.copy() #train_data_st[train_data_st['datetime'].isin(yeardatelist)].reset_index(drop=True)
+        train_end_index = len(train_data_st_y)
+        for dt_ind in range(train_end_index):
+            st_date = train_data_st_y.loc[dt_ind,'datetime']
+            feature, label, = train_loader.get(st_date, st)
+            state = torch.concat([feature, xt],-1) 
+            # Select action randomly or according to policy
+            action = agent.get_action(state)
+            
+            xt, reward = env.step(action, label)
+            revenue += reward
+            
+            if dt_ind < train_end_index - 1:
+                st_date_1 = train_data_st_y.loc[dt_ind+1,'datetime']
+                feature, label, = train_loader.get(st_date_1, st)
+            else :
+                done = True 
+                st_date_0 = train_data_st_y.loc[0,'datetime']
+                feature, label,  = train_loader.get(st_date_0, st)
+                
+            next_state = torch.concat([feature, xt],-1) 
+            # save the sample <s, a, r, s'> to the replay memory
+            agent.append_sample(state, action, reward, next_state, done)
+            
+            if len(agent.memory) >= agent.train_start:
+                loss = agent.train_model(optimizer)
+        revenue_sum += revenue
 
-        pred = model(feature)
-        loss = loss_fn(pred, label, args)
-
-        optimizer.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_value_(model.parameters(), 3.)
-        optimizer.step()
-        # scheduler.step()
-
-
-def test_epoch(epoch, model, test_loader, writer, args, prefix='Test'):
-
-    model.eval()
-    losses = []
+def test_epoch(epoch, agent, env, test_loader, train_data_dt_st, writer, args, prefix='Test'):
+    # agent.eval()
+    losses = [0]
     preds = []
+    revenue_sum = 0
+    xt = env.reset(epoch)
+    # for i, slc in tqdm(test_loader.iter_daily(), desc=prefix, total=test_loader.daily_length):
+    for st in train_data_dt_st['instrument'].drop_duplicates():
+        revenue = 0
+        train_data_st = train_data_dt_st[train_data_dt_st['instrument']==st].reset_index(drop=True)
+        # train_data_st['year'] = train_data_st['datetime'].dt.year
+        yearly_groups = [1]  # train_data_st.groupby('year')['datetime'].apply(list)
+        # print(yearly_groups)
+        for yeardatelist in yearly_groups:
+            train_data_st_y = train_data_st.copy() #train_data_st[train_data_st['datetime'].isin(yeardatelist)].reset_index(drop=True)
+            # print(train_data_st_y)
+            train_end_index = len(train_data_st_y)
+            for dt_ind in range(train_end_index):
+                st_date = train_data_st_y.loc[dt_ind,'datetime']
+                feature, label, = test_loader.get(st_date, st)
+                with torch.no_grad():
+                    # state = [feature, xt]
+                    state = torch.concat([feature, xt],-1) 
+                    action = agent.get_action(state)
+                    xt, reward = env.step(action, label)
+                    revenue += reward
+                if prefix=='Test':
+                    preds_df = pd.DataFrame({ 'action': action, 'label': label.cpu().detach().numpy(), 'datetime': st_date ,'instrument':st})
+                    preds.append(preds_df.set_index(['datetime','instrument'],drop=True))
+        revenue_sum += revenue
+    if prefix=='Test':
+        preds = pd.concat(preds, axis=0)
+    return np.mean(losses), revenue_sum, preds #, precision, recall, ic, rank_ic
 
-    for i, slc in tqdm(test_loader.iter_daily(), desc=prefix, total=test_loader.daily_length):
-        feature, label, index = test_loader.get(slc)
-        with torch.no_grad():
-            pred = model(feature)
-            loss = loss_fn(pred, label, args)
-            preds.append(pd.DataFrame({ 'score': pred.cpu().numpy(), 'label': label.cpu().numpy(), }, index=index))
-
-        losses.append(loss.item())
-    #evaluate
-    preds = pd.concat(preds, axis=0)
-    retu = preds.groupby(level='datetime').apply(lambda x: np.sum(x.label*x.score)).mean()
-    scores = retu # -1.0 * np.mean(losses)
-
-    writer.add_scalar(prefix+'/Loss', np.mean(losses), epoch)
-    writer.add_scalar(prefix+'/std(Loss)', np.std(losses), epoch)
-
-    return np.mean(losses), scores #, precision, recall, ic, rank_ic
-
-def inference(model, data_loader):
-    model.eval()
+def inference(agent, env, data_loader, train_data_dt_st):
+    # agent.eval()
+    revenue_sum = 0
+    xt = env.reset(0)
     preds = []
-    for i, slc in tqdm(data_loader.iter_daily(), total=data_loader.daily_length):
-        feature, label, index = data_loader.get(slc)
-        with torch.no_grad():
-            pred = model(feature)
-            preds.append(pd.DataFrame({ 'score': pred.cpu().numpy(), 'label': label.cpu().numpy(),  }, index=index))
-
+    # for i, slc in tqdm(data_loader.iter_daily(), total=data_loader.daily_length):
+    for st in train_data_dt_st['instrument'].drop_duplicates():
+        revenue = 0
+        train_data_st = train_data_dt_st[train_data_dt_st['instrument']==st].reset_index(drop=True)
+        # train_data_st['year'] = train_data_st['datetime'].dt.year
+        # yearly_groups = [1]  # train_data_st.groupby('year')['datetime'].apply(list)
+        # print(yearly_groups)
+        # for yeardatelist in yearly_groups:
+        train_data_st_y = train_data_st.copy() #train_data_st[train_data_st['datetime'].isin(yeardatelist)].reset_index(drop=True)
+        # print(train_data_st_y)
+        train_end_index = len(train_data_st_y)
+        for dt_ind in range(train_end_index):
+            st_date = train_data_st_y.loc[dt_ind,'datetime']
+            feature, label, = data_loader.get(st_date, st)
+            with torch.no_grad():
+                state = torch.concat([feature, xt],-1) 
+                action = agent.get_action(state)
+                xt, reward = env.step(action, label)
+                revenue += reward
+            preds_df = pd.DataFrame({ 'action': action.flatten()[0], 'label': label.cpu().detach().numpy(), 'datetime': st_date ,'instrument':st})
+            preds.append(preds_df.set_index(['datetime','instrument'],drop=True))
+        revenue_sum += revenue
     preds = pd.concat(preds, axis=0)
-    return preds
+    return preds, revenue_sum
 
-
+'''
 def loadandinference(args):
     pprint('create model...')
     if args.model_name == 'TRANSFORMER':
@@ -172,17 +222,31 @@ def create_newloader(args):
     test_loader = DataLoader(dev_test_mul[Columns], dev_test_mul["label"], pin_memory=False, start_index=0, device = device)
 
     return test_loader
+'''
 
 def create_loaders(args, train_data, val_data, test_data ):
 
     Feature = args.features # ['s_dq_adjopen', 's_dq_adjhigh', 's_dq_adjlow', 's_dq_adjclose', 's_dq_volume',] # 's_dq_amount']
     Columns = []
-
+    # 新方法：除以前一天close
+    # for f in Feature:
+    #     for i in range(args.days+1,0,-1):
+    #         Columns.append(f+'_lag_'+str(i))
+        
     # 原始方法：除以当天close
     for f in Feature:
         for i in range(args.days-1,0,-1):
             Columns.append(f+'_lag_'+str(i))
         Columns.append(f)
+
+    # train_time = train_data['datetime'].drop_duplicates().to_list() # 虽然是str形式的日期，但是仍然可以用字符串比大小
+    # train_stock = train_data['instrument'].drop_duplicates().to_list()
+
+    # valid_time = val_data['datetime'].drop_duplicates().to_list()
+    # valid_stock = val_data['instrument'].drop_duplicates().to_list()
+
+    # test_time = test_data['datetime'].drop_duplicates().to_list()
+    # test_stock = test_data['instrument'].drop_duplicates().to_list()
 
     dev_train = train_data.set_index(['datetime', 'instrument'])
     dev_valid = val_data.set_index(['datetime', 'instrument'])
@@ -194,13 +258,13 @@ def create_loaders(args, train_data, val_data, test_data ):
 
     start_index += len(dev_train.groupby(level=0,group_keys=False).size())
 
-    valid_loader = DataLoader(dev_valid[Columns], dev_valid["label"],  pin_memory=False, start_index=start_index, device = device)
+    valid_loader = DataLoader(dev_valid[Columns], dev_valid["label"], pin_memory=False, start_index=start_index, device = device)
     
     start_index += len(dev_valid.groupby(level=0,group_keys=False).size())
 
     test_loader = DataLoader(dev_test_mul[Columns], dev_test_mul["label"], pin_memory=False, start_index=start_index, device = device)
 
-    return train_loader, valid_loader, test_loader
+    return train_loader, valid_loader, test_loader, train_data[['datetime', 'instrument']], val_data[['datetime', 'instrument']],test_data[['datetime', 'instrument']]
 
 
 def main(args, train_data, val_data, test_data ):
@@ -234,22 +298,30 @@ def main(args, train_data, val_data, test_data ):
     train_loaders = []
     valid_loaders = []
     test_loaders = []
+    train_lens = []
+    valid_lens = []
+    test_lens = []
     for start_date in start_dates:
         pprint('start loading', start_date)
-        train, valid, test = create_loaders(args, train_data, val_data, test_data )
+        train, valid, test, train_len, valid_len, test_len = create_loaders(args, train_data, val_data, test_data )
         pprint(start_date, ' done...in progress...')
         train_loaders.append(train)
+        train_lens.append(train_len)
         valid_loaders.append(valid)
+        valid_lens.append(valid_len)
         test_loaders.append(test)
+        test_lens.append(test_len)
     # train_loader, valid_loader, test_loader = create_loaders(args)
     pprint('loaders done')
     out_put_path_base = output_path
 
     for i in range(0,len(train_loaders)):
-
         train_loader = train_loaders[i]
+        train_ilens = train_lens[i]
         test_loader = test_loaders[i]
+        test_ilens = test_lens[i]
         valid_loader = valid_loaders[i]
+        valid_ilens = valid_lens[i]
         output_path = out_put_path_base +'/rolling' + start_dates[i]
         if not os.path.exists(output_path):
             os.makedirs(output_path)
@@ -259,22 +331,24 @@ def main(args, train_data, val_data, test_data ):
         # all_rank_ic = []
         for times in range(args.repeat):
             pprint('create model...')
-            if args.model_name == 'TRANSFORMER':
-                model = get_model(args.model_name)(args.d_feat, args.hidden_size, args.num_layers, dropout=args.dropout)
-            else:
-                model = get_model(args.model_name)(d_feat = args.d_feat, num_layers = args.num_layers)
+            # if args.model_name == 'TRANSFORMER':
+            #     model = get_model(args.model_name)(args.d_feat, args.hidden_size, args.num_layers, dropout=args.dropout)
+            # else:
+            #     model = get_model(args.model_name)(d_feat = args.d_feat, num_layers = args.num_layers)
+            state_size = args.days * args.d_feat +1
+            action_size = args.action_size
+            env = HQindex(state_size, action_size,device)
+    
+            # state_size = env.state_size  # env.observation_space.shape[0]
+            # action_size = env.action_size  # env.action_space.n
 
-            model.to(device)
+            model = DQNAgent(state_size, action_size, device)
+            # model.to(device)
 
-            optimizer = optim.Adam(model.parameters(), lr=args.lr)
-            actor_scheduler = None
-            # lr_scheduler.MultiStepLR(optimizer, 
-            #     range(int(args.actor_lr_decay_step), int(args.actor_lr_decay_step) * 1000, int(args.actor_lr_decay_step)), gamma=0.96 )
-            # 定义学习率调度器
+            optimizer = optim.Adam(model.model.parameters(), lr=args.lr)
+            
+           # 定义学习率调度器
             Re_scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, verbose=True)
-
-            # range(int(args['actor_lr_decay_step']), int(args['actor_lr_decay_step']) * 1000,
-            # int(args['actor_lr_decay_step'])), gamma=float(args['actor_lr_decay_rate']))
 
             best_score = -np.inf
             best_epoch = 0
@@ -282,11 +356,13 @@ def main(args, train_data, val_data, test_data ):
             stop_round = 0
             best_param = copy.deepcopy(model.state_dict())
             params_list = collections.deque(maxlen=args.smooth_steps)
-            for epoch in range(args.n_epochs):
+            for epoch in range(args.n_EPISODES):
+                
                 pprint('Running', times,'Epoch:', epoch)
 
                 pprint('training...')
-                train_epoch(epoch, model, optimizer, actor_scheduler, train_loader, writer, args)
+                
+                train_epoch(epoch, optimizer, model, env, train_loader, train_ilens, writer, args)
                 # torch.save(model.state_dict(), output_path+'/model.bin.e'+str(epoch))
                 # torch.save(optimizer.state_dict(), output_path+'/optimizer.bin.e'+str(epoch))
 
@@ -296,48 +372,40 @@ def main(args, train_data, val_data, test_data ):
                 model.load_state_dict(avg_params)
 
                 pprint('evaluating...')
+                
                 # train_loss, train_score, train_precision, train_recall, train_ic, train_rank_ic = test_epoch(epoch, model, train_loader, writer, args, prefix='Train')
                 # val_loss, val_score, val_precision, val_recall, val_ic, val_rank_ic = test_epoch(epoch, model, valid_loader, writer, args, prefix='Valid')
-                train_loss, train_score = test_epoch(epoch, model, train_loader, writer, args, prefix='Train')
-                val_loss, val_score = test_epoch(epoch, model, valid_loader, writer, args, prefix='Valid')
+                train_loss, train_score, train_preds = test_epoch(epoch, model, env, train_loader, train_ilens, writer, args, prefix='Train')
+                val_loss, val_score, val_preds = test_epoch(epoch, model, env, valid_loader, valid_ilens, writer, args, prefix='Valid')
                 
                 # pprint('train_ic %.6f, valid_ic %.6f'%(train_ic, val_ic))
                 # test_loss, test_score, test_precision, test_recall, test_ic, test_rank_ic = test_epoch(epoch, model, test_loader, writer, args, prefix='Test')
-                test_loss, test_score = test_epoch(epoch, model, test_loader, writer, args, prefix='Test')
-
+                test_loss, test_score, test_preds = test_epoch(epoch, model, env, test_loader, test_ilens, writer, args, prefix='Test')
+                
+                test_preds.to_pickle(output_path+'/pred.pkl.'+'test'+str(times)+str(epoch))
+                            
                 pprint('train_loss %.6f, valid_loss %.6f, test_loss %.6f'%(train_loss, val_loss, test_loss))
                 pprint('train_score %.6f, valid_score %.6f, test_score %.6f'%(train_score, val_score, test_score))
 
                 model.load_state_dict(params_ckpt)
                 
                 # 使用调度器调整学习率
-                Re_scheduler.step(val_loss)
-                # actor_scheduler.step()
-
-                if val_score > best_score:
-                    best_score = val_score
-                    stop_round = 0
-                    # epochs_no_improve = 0
-                    best_epoch = epoch
-                    best_param = copy.deepcopy(avg_params)
-                else:
-                    stop_round += 1
-                    # epochs_no_improve += 1
-                    # 当首次验证损失未改善时保存最佳模型
-                    if stop_round == 1:
-                        model.load_state_dict(best_param)
-                        torch.save(best_param, output_path+'/model.bin.e'+str(best_epoch))
-
-                        pprint('inference...')
-                        res = dict()
-                        for name in ['test']:
-                            pred= inference(model, eval(name+'_loader'))
-                            pred.to_pickle(output_path+'/pred.pkl.'+name+str(times)+str(best_epoch))
-                        
-                    if stop_round >= args.early_stop:
-                        pprint('early stop')
-                        break
-                pprint('Best epoch: ', best_epoch)
+                Re_scheduler.step(-val_score)
+                # 至少训练10轮
+                if epoch >= 5:
+                    if val_score > best_score:
+                        best_score = val_score
+                        stop_round = 0
+                        # epochs_no_improve = 0
+                        best_epoch = epoch
+                        best_param = copy.deepcopy(avg_params)
+                    else:
+                        stop_round += 1
+                    
+                        if stop_round >= args.early_stop:
+                            pprint('early stop')
+                            break
+                    pprint('Best epoch: ', best_epoch)
                 
             pprint('best score:', best_score, '@', best_epoch)
             
@@ -347,17 +415,10 @@ def main(args, train_data, val_data, test_data ):
             pprint('inference...')
             res = dict()
             for name in ['test']:
-                pred= inference(model, eval(name+'_loader'))
+                pred, revenue= inference(model, env, eval(name+'_loader'), eval(name+'_ilens'))
                 pred.to_pickle(output_path+'/pred.pkl.'+name+str(times))
 
             pprint('save info...')
-            # writer.add_hparams(
-            #     vars(args),
-            #     {
-            #         'hparam/'+key: value
-            #         for key, value in res.items()
-            #     }
-            # )
 
             info = dict(
                 config=vars(args),
@@ -372,12 +433,9 @@ def main(args, train_data, val_data, test_data ):
 
 
 class ParseConfigFile(argparse.Action):
-
     def __call__(self, parser, namespace, filename, option_string=None):
-
         if not os.path.exists(filename):
             raise ValueError('cannot find config at `%s`'%filename)
-
         with open(filename) as f:
             config = json.load(f)
             for key, value in config.items():
@@ -386,16 +444,17 @@ class ParseConfigFile(argparse.Action):
 
 def data_prepare(mode, args):
     # import pandas as pd
-    test = pd.read_csv(args.filepath) #, index_col=0
+    test = pd.read_csv(args.filepath, index_col=0)
+    test['END_DATE'] = pd.to_datetime(test['END_DATE'])
+    
+    # test = test[test['STOCK_CODE'] =='000300'].reset_index(drop=True )
+    test = test[test['STOCK_CODE'].isin(['000905','000852','000300','000001'])].reset_index(drop=True )
+    # 如果要跑全市场的，
+
     test = test.sort_values(by=['END_DATE', 'STOCK_CODE'])
-
-    test['PRE_CLOSE'] = test.groupby('STOCK_CODE',group_keys=False)['CLOSE'].shift(-args.labels)
-    test['NEXT_CLOSE'] = test.groupby('STOCK_CODE',group_keys=False)['CLOSE'].shift(-args.NEXT_CLOSE)
-    # 创建1日标签
-    test['label'] = test['PRE_CLOSE'].div( test['NEXT_CLOSE'], axis=0)-1
-    test['label_std'] = test.groupby('STOCK_CODE',group_keys=False)['label'].rolling(180).std().values
-    test['sharp_label'] = test['label'].div(test['label_std'] ,axis=0)
-
+        
+    test['NEXT_CLOSE'] = test.groupby('STOCK_CODE',group_keys=False)['CLOSE'].shift(-args.labels)
+        
     test1 = test.dropna().reset_index(drop=True) #.drop('Unnamed: 0',axis=1)
     # .to_csv('test1.csv',index=False)
 
@@ -420,6 +479,9 @@ def data_prepare(mode, args):
 
     # 去除前60天的NaN数据
     expanded_df = df_cleaned.dropna().reset_index(drop=True)
+
+    # 创建1日标签
+    expanded_df['label'] = expanded_df['NEXT_CLOSE'].div( expanded_df['CLOSE'], axis=0)-1
 
     # 标准化特征
     Feature = ['OPEN', 'HIGH', 'LOW', 'CLOSE',] # , ['VOL', 'VALUE']
@@ -463,43 +525,43 @@ def parse_args():
     parser = argparse.ArgumentParser()
 
     # model
-    parser.add_argument('--model_name', default='TRANSFORMER') # GRU TRANSFORMER
+    parser.add_argument('--model_name', default='GRU') # GRU TRANSFORMER
     parser.add_argument('--hidden_size', type=int, default=128)
     parser.add_argument('--num_layers', type=int, default=2)
     parser.add_argument('--dropout', type=float, default=0.1)
     # parser.add_argument('--K', type=int, default=1)
+    parser.add_argument('--action_size', type=int, default=2)  # 6
     parser.add_argument('--d_feat', type=int, default=6)  # 6
     parser.add_argument('--features', default= 
         ['OPEN', 'HIGH', 'LOW', 'CLOSE','VOL', 'VALUE'])  # 6
    
     # training
-    parser.add_argument('--n_epochs', type=int, default=150)
-    parser.add_argument('--lr', type=float, default=2e-4)
-    parser.add_argument('--early_stop', type=int, default=15)
+    parser.add_argument('--n_EPISODES', type=int, default=15000)
+    parser.add_argument('--lr', type=float, default=5e-4)
+    parser.add_argument('--early_stop', type=int, default=25)
     parser.add_argument('--smooth_steps', type=int, default=5)
-    parser.add_argument('--actor_lr_decay_step', type=int, default=50)
+    # parser.add_argument('--actor_lr_decay_step', type=int, default=50)
     
     # parser.add_argument('--metric', default='loss')
     parser.add_argument('--loss', default='mse') # mse CE
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--mode', type=str, default='train')
-    parser.add_argument('--filepath', type=str, default='../data/hq_index5.csv')
+    parser.add_argument('--filepath', type=str, default='../data/hq_index.csv')
 
     # data
     parser.add_argument('--data_set', type=str, default='all')
     parser.add_argument('--pin_memory', action='store_false', default=False)
-    parser.add_argument('--batch_size', type=int, default=1000) # -1 indicate daily batch
+    parser.add_argument('--batch_size', type=int, default=-1) # -1 indicate daily batch
     parser.add_argument('--least_samples_num', type=float, default=1137.0)
     
-    parser.add_argument('--train_start_date', default='1990-12-19') #2009-01-01
-    parser.add_argument('--train_end_date', default='2016-12-31') # 2016-12-31
-    parser.add_argument('--valid_start_date', default='2017-01-01') # 2017-01-01
-    parser.add_argument('--valid_end_date', default='2018-12-31') # 2018-12-31
-    parser.add_argument('--test_start_date', default='2019-01-01') # 2019-01-01
-    parser.add_argument('--test_end_date', default='2024-08-18') # 2022-12-31
-    parser.add_argument('--labels', type=int, default=2)
-    parser.add_argument('--NEXT_CLOSE', type=int, default=1)
-    parser.add_argument('--days', type=int, default=30) # specify other labels
+    parser.add_argument('--train_start_date', default='1990-12-19') #1990-12-19
+    parser.add_argument('--train_end_date', default='2016-12-31') # 2017-12-31
+    parser.add_argument('--valid_start_date', default='2017-01-01') # 2018-01-01
+    parser.add_argument('--valid_end_date', default='2018-12-31') # 2019-12-31
+    parser.add_argument('--test_start_date', default='2019-01-01') # 2020-01-01
+    parser.add_argument('--test_end_date', default='2024-06-18') # 2024-06-18
+    parser.add_argument('--labels', type=int, default=1)
+    parser.add_argument('--days', type=int, default=30) # 30 60 
 
     # other
     parser.add_argument('--seed', type=int, default=0)
@@ -507,7 +569,7 @@ def parse_args():
     parser.add_argument('--config', action=ParseConfigFile, default='')
     parser.add_argument('--name', type=str, default='all_transf') # 07_20
 
-    parser.add_argument('--outdir', default='./output/hq5_transf_label2to1_mse_retscores')
+    parser.add_argument('--outdir', default='./output/hq4_RL_transf_label1_3e-3')
     parser.add_argument('--overwrite', action='store_true', default=False)
 
     args = parser.parse_args()
@@ -521,6 +583,7 @@ if __name__ == '__main__':
     pprint('begin...')
     # 数据预处理
     train, val, test = data_prepare('train',args)
+    # train.to_csv('data/train.csv', index=False)
     # val.to_csv('val.csv', index=False)
     # data_prepare('../test.txt','test',args)
     pprint('data prepare done...')
@@ -528,6 +591,7 @@ if __name__ == '__main__':
     if args.mode == 'train':
         main(args, train, val ,test)
     elif args.mode == 'test':
-        loadandinference(args)
+        pprint('loadandinference!')
+        # loadandinference(args)
     else:
         pprint('mode name error!')
